@@ -1,5 +1,5 @@
-const CACHE = 'workout-app-v1';
-const ASSETS = ['./', 'index.html', 'styles.css?v=1', 'js/exercises.js?v=1', 'js/csv.js?v=1', 'js/app.js?v=1', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'workout-app-v2';
+const ASSETS = ['./', 'index.html', 'styles.css?v=2', 'js/exercises.js?v=2', 'js/csv.js?v=2', 'js/sd.js?v=2', 'js/app.js?v=2', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('workout-app-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {

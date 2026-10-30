@@ -37,7 +37,7 @@ h1.big{font-size:34px;font-weight:800;margin:6px 0 14px;letter-spacing:-.5px}
 .chart text{font-size:11px;fill:var(--muted);font-family:inherit}
 .chart .lbl{fill:#555;font-weight:600}
 .range{display:flex;gap:6px;margin-top:8px}
-.range button{font-size:12px;padding:4px 9px;border-radius:8px;background:var(--gray);color:#555;font-weight:600}
+.range button{white-space:nowrap;font-size:12px;padding:4px 9px;border-radius:8px;background:var(--gray);color:#555;font-weight:600}
 .range button.on{background:var(--blue-l);color:var(--blue)}
 .stat-row{display:flex;gap:14px;margin:10px 0 8px;color:#444;font-weight:600;font-size:15px}
 .stat-row span{display:inline-flex;align-items:center;gap:4px;flex:1;white-space:nowrap}

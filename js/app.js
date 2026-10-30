@@ -13,9 +13,9 @@ function idb() {
 }
 async function dbGet(k) { const d = await idb(); return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 async function dbSet(k, v) { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
-const KEYS = ['workouts', 'templates', 'customEx', 'bw', 'settings', 'active'];
+const KEYS = ['workouts', 'templates', 'customEx', 'bw', 'settings', 'active', 'sdsync'];
 const DEFAULT_SETTINGS = { unit: 'kg', goal: 6, rest: 120, name: '나', exUnit: {}, dash: ['Squat (Barbell)', 'Bench Press (Barbell)', 'Deadlift (Barbell)', 'Sumo Deadlift (Barbell)', 'Overhead Press (Barbell)'] };
-const S = { workouts: [], templates: [], customEx: [], bw: [], settings: { ...DEFAULT_SETTINGS }, active: null };
+const S = { workouts: [], templates: [], customEx: [], bw: [], settings: { ...DEFAULT_SETTINGS }, active: null, sdsync: { token: '', last: 0, count: 0, err: '' } };
 const saveTimers = {};
 function save(k, now) {
   clearTimeout(saveTimers[k]);
@@ -215,7 +215,9 @@ function renderProfile(v) {
   const labels = weeks.map(d => `${d.getMonth() + 1}.${d.getDate()}.`);
   const bwFrom = rangeFrom('bw');
   const bwSorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1);
-  const bwPts = bwSorted.filter(e => +pd(e.date) >= bwFrom).map(e => ({ x: pd(e.date), y: toU(e.kg) }));
+  const bwDaily = []; let lastDay = '';
+  for (const e of bwSorted) { const dk = e.date.slice(0, 10); if (dk !== lastDay) { bwDaily.push(e); lastDay = dk; } } // first (morning) value per day
+  const bwPts = bwDaily.filter(e => +pd(e.date) >= bwFrom).map(e => ({ x: pd(e.date), y: toU(e.kg) }));
   const lastBw = bwSorted[bwSorted.length - 1];
   v.innerHTML = `
   <div class="topbar"><div class="l"><button class="icon-btn" data-act="settings">${ICON.gear}</button></div><div class="r"></div></div>
@@ -228,9 +230,9 @@ function renderProfile(v) {
     <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal)}</div>
   </div>
   <div class="card">
-    <div class="between"><div><h3>체중</h3><div class="sub">${lastBw ? '최근 ' + fmtW(lastBw.kg) + ' · ' + fmtShort(pd(lastBw.date)) : '기록 없음'}</div></div>
+    <div class="between"><div><h3>체중</h3><div class="sub">${lastBw ? '최근 ' + fmtW(lastBw.kg) + ' · ' + fmtShort(pd(lastBw.date)) + ' ' + lastBw.date.slice(11, 16) : '기록 없음 · 설정에서 심플다이어트 연동'}</div></div>
       <div class="row"><button class="pill" data-act="bw-list">목록</button><button class="pill" data-act="bw-add">＋</button></div></div>
-    <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}
+    <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}<div class="muted tiny" style="margin-top:6px">하루 첫(아침) 기록 기준${S.sdsync.token ? ' · 심플다이어트 연동됨' : ''}</div>
   </div>
   ${S.settings.dash.map(name => {
     const pts = prPoints(name, rangeFrom(name));
@@ -704,12 +706,15 @@ function renderSettings(v) {
     <button class="btn light" data-act="tpl-auto" style="margin-bottom:8px">기록에서 템플릿 자동 생성</button>
     <button class="btn red" data-act="clear">모든 데이터 삭제</button>
   </div>
-  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v1 · 오프라인 사용 가능</div>`;
+  <div class="section-h">심플다이어트 체중</div>
+  <div class="card" id="sdCard">${sdCardHtml()}</div>
+  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v2 · 오프라인 사용 가능</div>`;
   $('.s-name', v).addEventListener('change', e => { S.settings.name = e.target.value.trim() || '나'; save('settings'); });
   $('.s-goal', v).addEventListener('change', e => { S.settings.goal = Math.max(1, parseInt(e.target.value) || 6); save('settings'); });
   $('.s-rest', v).addEventListener('change', e => { S.settings.rest = Math.max(0, parseInt(e.target.value) || 0); save('settings'); });
   $('.f-csv', v).addEventListener('change', e => { importCsvFile(e.target.files[0]); e.target.value = ''; });
   $('.f-json', v).addEventListener('change', e => { importJsonFile(e.target.files[0]); e.target.value = ''; });
+  bindSdCard(v);
 }
 async function importCsvText(text) {
   const res = StrongCSV.importStrong(text, { exUnit: S.settings.exUnit });
@@ -801,11 +806,11 @@ document.addEventListener('click', e => {
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
         <div class="field"><label>체중 (${S.settings.unit})</label><input class="bwv" inputmode="decimal" type="number" step="0.1" value="${lastBw ? nfmt(toU(lastBw.kg)) : ''}"></div>
         <div class="field"><label>날짜</label><input class="bwd" type="date" value="${dayKey(new Date())}"></div>`, { bottom: true });
-      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const date = ($('.bwd', m).value || dayKey(new Date())) + 'T12:00:00'; S.bw = S.bw.filter(x => x.date.slice(0, 10) !== date.slice(0, 10)); S.bw.push({ date, kg: fromU(v) }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
+      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${pad(now.getHours())}:${pad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
       break;
     }
     case 'bw-list': {
-      const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><span></span></div>${S.bw.length ? S.bw.slice().reverse().map(x => `<div class="list-row"><span>${fmtShort(pd(x.date))}</span><span><b>${fmtW(x.kg)}</b> <button class="del" data-bwdel="${x.date}">✕</button></span></div>`).join('') : '<div class="empty small">기록 없음</div>'}`, { bottom: true });
+      const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><span></span></div>${S.bw.length ? `<div class="muted small">${S.bw.length.toLocaleString('ko-KR')}개 기록${S.bw.length > 400 ? ' · 최근 400개 표시' : ''}</div>` + S.bw.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 400).map(x => `<div class="list-row"><span>${fmtShort(pd(x.date))} <span class="muted small">${x.date.slice(11, 16)}</span>${x.src === 'sd' ? '<span class="chip">심플다이어트</span>' : ''}</span><span><b>${fmtW(x.kg)}</b> <button class="del" data-bwdel="${x.date}">✕</button></span></div>`).join('') : '<div class="empty small">기록 없음</div>'}`, { bottom: true });
       m.addEventListener('click', ev => { const d = ev.target.closest('[data-bwdel]'); if (d && confirm('삭제할까요?')) { S.bw = S.bw.filter(x => x.date !== d.dataset.bwdel); save('bw'); closeAllModals(); render(); } });
       break;
     }
@@ -832,7 +837,7 @@ document.addEventListener('click', e => {
     case 'unit': S.settings.unit = t.dataset.v; save('settings'); render(); break;
     case 'exp-csv': download(`strong_export_${stamp()}.csv`, '\uFEFF' + StrongCSV.exportStrong(S.workouts, { exUnit: S.settings.exUnit }), 'text/csv'); break;
     case 'exp-json': download(`workout_backup_${stamp()}.json`, JSON.stringify({ app: 'workout-app', version: 1, exported: new Date().toISOString(), workouts: S.workouts.map(clean), templates: S.templates, customEx: S.customEx, bw: S.bw, settings: S.settings }), 'application/json'); break;
-    case 'clear': if (confirm('정말 모든 데이터를 삭제할까요? 되돌릴 수 없어요.') && confirm('한 번 더 확인: 모든 워크아웃·템플릿·체중 기록이 삭제됩니다.')) { S.workouts = []; S.templates = []; S.customEx = []; S.bw = []; S.active = null; S.settings = { ...DEFAULT_SETTINGS, exUnit: {} }; for (const k of KEYS) save(k, true); derive(); render(); toast('삭제됨'); } break;
+    case 'clear': if (confirm('정말 모든 데이터를 삭제할까요? 되돌릴 수 없어요.') && confirm('한 번 더 확인: 모든 워크아웃·템플릿·체중 기록이 삭제됩니다.')) { S.workouts = []; S.templates = []; S.customEx = []; S.bw = []; S.active = null; S.sdsync = { token: '', last: 0, count: 0, err: '' }; S.settings = { ...DEFAULT_SETTINGS, exUnit: {} }; for (const k of KEYS) save(k, true); derive(); render(); toast('삭제됨'); } break;
   }
 });
 
@@ -843,7 +848,91 @@ document.addEventListener('click', e => {
   go('profile');
   $('#activeBanner').addEventListener('click', openActive);
   setInterval(tick, 500);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); if (S.sdsync.token && Date.now() - (S.sdsync.tried || 0) > 60000) sdSync(false); } });
+  window.addEventListener('online', () => { if (S.sdsync.token) sdSync(false); });
+  if (S.sdsync.token) sdSync(false);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.__app = { S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive };
+  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive };
 })();
+
+/* ================= 심플다이어트 ================= */
+let sdBusy = false;
+function sdCardHtml() {
+  const z = S.sdsync; const n = S.bw.filter(e => e.src === 'sd').length;
+  const last = z.last ? new Date(z.last) : null;
+  return `<div class="muted small" style="margin-bottom:10px">심플다이어트 체중 기록 ${n.toLocaleString('ko-KR')}개가 이 앱에 있어요. 프로필 체중 차트는 하루 첫(아침) 기록으로 그려요.</div>
+  <label class="btn light" style="margin-bottom:12px">심플다이어트 CSV 가져오기<input type="file" accept=".csv,text/csv,text/plain" class="f-sdcsv" hidden></label>
+  <div class="bold" style="margin-bottom:4px">심플다이어트 연동 (읽기 전용 자동 동기화)</div>
+  <div class="muted tiny" style="line-height:1.5;margin-bottom:8px">심플다이어트가 동기화하는 GitHub 저장소 <b>uhyun6907-boop/sd-data</b>의 records.json을 읽어와요. 이 앱은 sd-data에 절대 쓰지 않아요.<br>심플다이어트에 넣은 토큰을 그대로 붙여넣어도 되고, <b>sd-data 저장소에 Contents 읽기(Read-only) 권한만 있는 fine-grained 토큰</b>이면 충분해요. 토큰은 이 기기에만 저장돼요 (백업 파일에도 안 들어가요).</div>
+  ${z.token ? `<div class="list-row"><span>상태</span><span class="small" style="text-align:right">${z.err ? `<span style="color:var(--red)">${esc(z.err)}</span>` : last ? `✅ ${fmtShort(last)} ${pad(last.getHours())}:${pad(last.getMinutes())} · ${(z.count || 0).toLocaleString('ko-KR')}개` : '아직 동기화 안 함'}</span></div>
+    ${z.lastMsg ? `<div class="muted tiny" style="margin:-4px 0 8px;text-align:right">${esc(z.lastMsg)}</div>` : ''}
+    <button class="btn" data-sd="sync" style="margin-bottom:8px">${sdBusy ? '동기화 중…' : '지금 동기화'}</button>
+    <button class="btn gray" data-sd="off">연동 해제 (토큰 삭제)</button>`
+  : `<div class="field"><label>GitHub 토큰</label><input class="sd-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_… 또는 ghp_…"></div>
+    <button class="btn" data-sd="connect">연결하고 동기화</button>`}
+  <button class="btn light" data-sd="local" style="margin-top:8px">같은 브라우저의 심플다이어트 데이터 읽기</button>
+  <div class="muted tiny" style="margin-top:4px">Safari에서 두 앱을 모두 열어 쓸 때만 돼요. 홈 화면 앱끼리는 저장소가 분리돼 있어서 위의 연동을 쓰세요.</div>`;
+}
+function refreshSdCard() { const c = $('#sdCard'); if (c) { c.innerHTML = sdCardHtml(); bindSdCard(c); } }
+function bindSdCard(root) {
+  const f = $('.f-sdcsv', root);
+  if (f && !f._b) { f._b = 1; f.addEventListener('change', async e => { const file = e.target.files[0]; e.target.value = ''; if (file) importSdCsv(await file.text()); }); }
+  const card = root.id === 'sdCard' ? root : $('#sdCard', root);
+  if (card && !card._b) {
+    card._b = 1;
+    card.addEventListener('click', async e => {
+      const b = e.target.closest('[data-sd]'); if (!b) return;
+      const op = b.dataset.sd;
+      if (op === 'connect') { const t = $('.sd-token', card).value.trim(); if (!t) return toast('토큰을 붙여넣으세요'); S.sdsync = { ...S.sdsync, token: t, err: '' }; await save('sdsync', true); sdSync(true); }
+      if (op === 'sync') sdSync(true);
+      if (op === 'off' && confirm('연동을 해제할까요? 이미 가져온 체중 기록은 남아있어요.')) { S.sdsync = { token: '', last: 0, count: 0, err: '' }; save('sdsync', true); refreshSdCard(); }
+      if (op === 'local') {
+        const list = await SD.readSameOrigin();
+        if (!list || !list.length) return toast('이 브라우저에서 심플다이어트 데이터를 찾지 못했어요', 3500);
+        const r = mergeSdEntries(list); toast(`같은 브라우저에서 ${list.length}개 읽음 · 새로 ${r.added}개`, 3500); refreshSdCard();
+      }
+    });
+  }
+}
+function mergeSdEntries(list) {
+  const byDate = new Map(S.bw.map((e, i) => [e.date, i]));
+  let added = 0, updated = 0;
+  for (const e of list) {
+    const i = byDate.get(e.date);
+    if (i == null) { S.bw.push(e); byDate.set(e.date, S.bw.length - 1); added++; }
+    else if (S.bw[i].kg !== e.kg || S.bw[i].src !== 'sd') { S.bw[i] = e; updated++; }
+  }
+  S.bw.sort((a, b) => a.date < b.date ? -1 : 1);
+  save('bw', true);
+  if (TAB === 'profile') render();
+  return { added, updated };
+}
+function importSdCsv(text) {
+  try {
+    const res = SD.parseCsv(text);
+    const r = mergeSdEntries(res.entries);
+    const es = res.entries, last = es[es.length - 1];
+    openModal(`<div style="text-align:center"><div style="font-size:40px">⚖️</div><h2 style="margin:6px 0">체중 가져오기 완료</h2>
+    <div class="card" style="text-align:left;line-height:1.8">파일 행: ${res.rows.toLocaleString('ko-KR')}개 (같은 시각 중복 ${res.rows - es.length - res.bad}개 정리)<br>체중 기록: <b>${es.length.toLocaleString('ko-KR')}</b>개 · 새로 ${r.added.toLocaleString('ko-KR')}개${r.updated ? ` · 갱신 ${r.updated}개` : ''}<br>기간: ${es.length ? fmtShort(pd(es[0].date)) + ' ~ ' + fmtShort(pd(last.date)) : '-'}<br>최근: ${last ? fmtW(last.kg) + ' (' + fmtShort(pd(last.date)) + ' ' + last.date.slice(11, 16) + ')' : '-'}</div>
+    <button class="btn" data-close>확인</button></div>`);
+    refreshSdCard();
+  } catch (e) { toast('가져오기 실패: ' + e.message, 4000); }
+}
+async function sdSync(manual) {
+  const z = S.sdsync; if (!z.token || sdBusy) return;
+  sdBusy = true; z.tried = Date.now(); refreshSdCard();
+  try {
+    const recs = await SD.fetchRemote(z.token);
+    const r = SD.applyRecords(S.bw, recs);
+    S.bw = r.bw;
+    await save('bw', true);
+    S.sdsync = { ...S.sdsync, last: Date.now(), count: r.live, err: '', lastMsg: `새로 ${r.added} · 갱신 ${r.updated} · 삭제 ${r.removed}` };
+    if (manual) toast(`동기화 완료 · 새로 ${r.added}개, 갱신 ${r.updated}개, 삭제 ${r.removed}개`, 3000);
+    if (TAB === 'profile') render();
+  } catch (e) {
+    S.sdsync = { ...S.sdsync, err: e.message };
+    if (manual) toast('동기화 실패: ' + e.message, 4000);
+  } finally {
+    sdBusy = false; save('sdsync', true); refreshSdCard();
+  }
+}
