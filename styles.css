@@ -129,3 +129,19 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 
 .timer-bar[hidden]{display:none}
 .ex-list{padding-right:14px}
+.rest-chip{background:var(--blue-l);color:var(--blue);border-radius:9px;padding:5px 9px;font-weight:700;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rest-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.rest-grid button{padding:12px 0;border-radius:10px;background:var(--gray);font-weight:700;font-variant-numeric:tabular-nums}
+.rest-grid button.on{background:var(--blue);color:#fff}
+.timer-bar .prog{cursor:pointer}
+.sets tr.rest-row td{padding:0 3px 2px;background:none!important}
+.rest-line{position:relative;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.rest-line::before{content:'';position:absolute;left:8px;right:8px;top:50%;height:2px;background:var(--blue-l);transform:translateY(-50%)}
+.rest-line i{position:absolute;left:0;top:0;bottom:0;width:0;background:#9FD0FA;border-radius:6px}
+.rest-row.running .rest-line{background:var(--blue-l)}
+.rest-row.running .rest-line::before{display:none}
+.rest-time,.rest-input{position:relative;z-index:1;background:#fff;color:var(--blue);font-weight:700;font-size:13px;padding:1px 10px;border-radius:7px;font-variant-numeric:tabular-nums}
+.rest-row.running .rest-time{background:transparent;color:#0B3A66}
+.rest-row.past:not(.running) .rest-time{color:var(--muted)}
+.rest-input{width:70px;text-align:center;border:1.5px solid var(--blue);outline:none}
+#toast button{background:none;border:0;font:inherit}

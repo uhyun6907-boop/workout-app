@@ -12,7 +12,52 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="styles.css?v=5">
+<script>
+/* update guard: runs before the app. Never touches IndexedDB (user data). */
+window.APP_VERSION = 6;
+(function () {
+  var V = window.APP_VERSION, SCOPE = '/workout-app/';
+  try { if (/[?&]u=\d+/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
+  function mine(r) { try { return new URL(r.scope).pathname.indexOf(SCOPE) === 0 || new URL(r.scope).pathname === location.pathname; } catch (e) { return false; } }
+  async function hardReload(note) {
+    try { if (note) localStorage.setItem('wa-updated', String(note)); } catch (e) {}
+    try { if (navigator.serviceWorker) { var regs = await navigator.serviceWorker.getRegistrations(); for (var i = 0; i < regs.length; i++) if (mine(regs[i])) await regs[i].unregister(); } } catch (e) {}
+    try { if (window.caches) { var ks = await caches.keys(); await Promise.all(ks.filter(function (k) { return k.indexOf('workout-app-') === 0; }).map(function (k) { return caches.delete(k); })); } } catch (e) {}
+    location.replace(location.pathname + '?u=' + Date.now()); // new URL => skips the 10-minute HTTP cache
+  }
+  window.__hardReload = hardReload;
+  async function checkVersion() {
+    try {
+      var r = await fetch('version.json?ts=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return;
+      var j = await r.json(), nv = +j.version || 0;
+      if (nv > V) {
+        var tries = +(sessionStorage.getItem('wa-upd-' + nv) || 0);
+        if (tries >= 2) return; // avoid reload loops (e.g. CDN still propagating)
+        sessionStorage.setItem('wa-upd-' + nv, String(tries + 1));
+        hardReload(nv);
+      }
+    } catch (e) { /* offline: keep running cached version */ }
+  }
+  window.__checkVersion = checkVersion;
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    var hadController = !!navigator.serviceWorker.controller, reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloaded) return; reloaded = true;
+      try { localStorage.setItem('wa-updated', String(V)); } catch (e) {}
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+      reg.update().catch(function () {});
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) reg.update().catch(function () {}); });
+    }).catch(function () {});
+  }
+  checkVersion();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkVersion(); });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) checkVersion(); });
+})();
+</script>
+<link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -28,9 +73,9 @@
   <div id="sheets"></div>
   <div id="toast" hidden></div>
 </div>
-<script src="js/exercises.js?v=5"></script>
-<script src="js/csv.js?v=5"></script>
-<script src="js/sd.js?v=5"></script>
-<script src="js/app.js?v=5"></script>
+<script src="js/exercises.js?v=6"></script>
+<script src="js/csv.js?v=6"></script>
+<script src="js/sd.js?v=6"></script>
+<script src="js/app.js?v=6"></script>
 </body>
 </html>
