@@ -217,8 +217,10 @@ function renderProfile(v) {
   const n = S.workouts.length;
   const ws0 = weekStart(new Date());
   const weeks = []; for (let i = 7; i >= 0; i--) { const d = new Date(ws0); d.setDate(d.getDate() - 7 * i); weeks.push(d); }
-  const counts = weeks.map(() => 0);
-  for (const w of S.workouts) { const d = w._date || pd(w.start); const idx = Math.round((weekStart(d) - weeks[0]) / (7 * 864e5)); if (idx >= 0 && idx < 8) counts[idx]++; }
+  // count distinct workout DAYS (local date) per week; 2 workouts on one day = 1
+  const daySets = weeks.map(() => new Set());
+  for (const w of S.workouts) { const d = w._date || pd(w.start); const idx = Math.round((weekStart(d) - weeks[0]) / (7 * 864e5)); if (idx >= 0 && idx < 8) daySets[idx].add(dayKey(d)); }
+  const counts = daySets.map(x => x.size);
   const labels = weeks.map(d => `${d.getMonth() + 1}.${d.getDate()}.`);
   const bwFrom = rangeFrom('bw');
   const bwSorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1);
@@ -232,7 +234,7 @@ function renderProfile(v) {
   <div class="profile-head"><div class="avatar">${ICON.person}</div><div><div class="bold" style="font-size:20px">${esc(S.settings.name)}</div><div class="muted" style="font-size:17px;font-weight:600">${n.toLocaleString('ko-KR')} 워크아웃</div></div></div>
   <div class="section-h"><span>대시보드</span></div>
   <div class="card">
-    <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 목표 ${S.settings.goal}회</div></div>
+    <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 운동한 날 수 · 목표 주 ${S.settings.goal}일</div></div>
       <button class="pill" data-act="goal">◎ 목표</button></div>
     <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal)}</div>
   </div>
@@ -708,7 +710,7 @@ function renderSettings(v) {
   <div class="card">
     <div class="list-row"><span>이름</span><input class="s-name" value="${esc(S.settings.name)}" style="border:0;text-align:right;outline:none;font-size:16px;width:50%"></div>
     <div class="list-row"><span>무게 단위</span><div class="seg"><button data-act="unit" data-v="kg" class="${S.settings.unit === 'kg' ? 'on' : ''}">kg</button><button data-act="unit" data-v="lb" class="${S.settings.unit === 'lb' ? 'on' : ''}">lb</button></div></div>
-    <div class="list-row"><span>주간 목표 (회)</span><input class="s-goal" type="number" inputmode="numeric" value="${S.settings.goal}" style="width:70px;text-align:right;border:0;outline:none;font-size:16px"></div>
+    <div class="list-row"><span>주간 목표 (운동한 날)</span><input class="s-goal" type="number" inputmode="numeric" value="${S.settings.goal}" style="width:70px;text-align:right;border:0;outline:none;font-size:16px"></div>
     <div class="list-row"><span>기본 휴식 타이머 (초)</span><input class="s-rest" type="number" inputmode="numeric" value="${S.settings.rest}" style="width:70px;text-align:right;border:0;outline:none;font-size:16px"></div>
   </div>
   <div class="section-h">데이터</div>
@@ -723,7 +725,7 @@ function renderSettings(v) {
   </div>
   <div class="section-h">심플다이어트 체중</div>
   <div class="card" id="sdCard">${sdCardHtml()}</div>
-  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v4 · 오프라인 사용 가능</div>`;
+  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v5 · 오프라인 사용 가능</div>`;
   $('.s-name', v).addEventListener('change', e => { S.settings.name = e.target.value.trim() || '나'; save('settings'); });
   $('.s-goal', v).addEventListener('change', e => { S.settings.goal = Math.max(1, parseInt(e.target.value) || 6); save('settings'); });
   $('.s-rest', v).addEventListener('change', e => { S.settings.rest = Math.max(0, parseInt(e.target.value) || 0); save('settings'); });
@@ -815,7 +817,7 @@ document.addEventListener('click', e => {
   const id = t.dataset.id;
   switch (a) {
     case 'settings': go('settings'); break;
-    case 'goal': { const g = prompt('주간 목표 워크아웃 횟수', S.settings.goal); if (g && +g > 0) { S.settings.goal = Math.round(+g); save('settings'); render(); } break; }
+    case 'goal': { const g = prompt('주간 목표 (운동한 날 수)', S.settings.goal); if (g && +g > 0) { S.settings.goal = Math.round(+g); save('settings'); render(); } break; }
     case 'bw-add': {
       const sorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1); const lastBw = sorted[sorted.length - 1];
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
