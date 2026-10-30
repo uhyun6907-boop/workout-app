@@ -708,7 +708,7 @@ function renderSettings(v) {
   </div>
   <div class="section-h">심플다이어트 체중</div>
   <div class="card" id="sdCard">${sdCardHtml()}</div>
-  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v2 · 오프라인 사용 가능</div>`;
+  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v3 · 오프라인 사용 가능</div>`;
   $('.s-name', v).addEventListener('change', e => { S.settings.name = e.target.value.trim() || '나'; save('settings'); });
   $('.s-goal', v).addEventListener('change', e => { S.settings.goal = Math.max(1, parseInt(e.target.value) || 6); save('settings'); });
   $('.s-rest', v).addEventListener('change', e => { S.settings.rest = Math.max(0, parseInt(e.target.value) || 0); save('settings'); });
@@ -868,7 +868,8 @@ function sdCardHtml() {
     ${z.lastMsg ? `<div class="muted tiny" style="margin:-4px 0 8px;text-align:right">${esc(z.lastMsg)}</div>` : ''}
     <button class="btn" data-sd="sync" style="margin-bottom:8px">${sdBusy ? '동기화 중…' : '지금 동기화'}</button>
     <button class="btn gray" data-sd="off">연동 해제 (토큰 삭제)</button>`
-  : `<div class="field"><label>GitHub 토큰</label><input class="sd-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_… 또는 ghp_…"></div>
+  : `<div class="field"><label>GitHub 토큰</label><div class="row"><input class="sd-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_… 또는 ghp_…" style="flex:1"><button class="pill" data-sd="paste" style="padding:10px 12px;white-space:nowrap">붙여넣기</button></div></div>
+    <div class="muted tiny" style="margin:-4px 0 8px">심플다이어트 설정 &gt; 동기화에서 “토큰 복사”를 누른 뒤 여기서 “붙여넣기”를 누르세요.</div>
     <button class="btn" data-sd="connect">연결하고 동기화</button>`}
   <button class="btn light" data-sd="local" style="margin-top:8px">같은 브라우저의 심플다이어트 데이터 읽기</button>
   <div class="muted tiny" style="margin-top:4px">Safari에서 두 앱을 모두 열어 쓸 때만 돼요. 홈 화면 앱끼리는 저장소가 분리돼 있어서 위의 연동을 쓰세요.</div>`;
@@ -883,7 +884,13 @@ function bindSdCard(root) {
     card.addEventListener('click', async e => {
       const b = e.target.closest('[data-sd]'); if (!b) return;
       const op = b.dataset.sd;
-      if (op === 'connect') { const t = $('.sd-token', card).value.trim(); if (!t) return toast('토큰을 붙여넣으세요'); S.sdsync = { ...S.sdsync, token: t, err: '' }; await save('sdsync', true); sdSync(true); }
+      if (op === 'connect') { const t = $('.sd-token', card).value.trim(); if (!t) return toast('토큰을 붙여넣으세요'); sdConnect(t); }
+      if (op === 'paste') {
+        let t = '';
+        try { if (navigator.clipboard && navigator.clipboard.readText) t = (await navigator.clipboard.readText() || '').trim(); } catch (err) { t = ''; }
+        if (looksLikeToken(t)) { $('.sd-token', card).value = t; sdConnect(t); }
+        else { const i = $('.sd-token', card); i.focus(); toast(t ? '클립보드 내용이 GitHub 토큰이 아니에요' : '클립보드를 읽지 못했어요. 칸을 길게 눌러 직접 붙여넣어 주세요', 3500); }
+      }
       if (op === 'sync') sdSync(true);
       if (op === 'off' && confirm('연동을 해제할까요? 이미 가져온 체중 기록은 남아있어요.')) { S.sdsync = { token: '', last: 0, count: 0, err: '' }; save('sdsync', true); refreshSdCard(); }
       if (op === 'local') {
@@ -894,6 +901,13 @@ function bindSdCard(root) {
     });
   }
 }
+function looksLikeToken(t) { return /^(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}$/.test(t); }
+async function sdConnect(t) { S.sdsync = { ...S.sdsync, token: t, err: '' }; await save('sdsync', true); sdSync(true); }
+document.addEventListener('paste', e => {
+  if (!e.target.classList || !e.target.classList.contains('sd-token')) return;
+  const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim();
+  if (looksLikeToken(t)) { e.preventDefault(); e.target.value = t; sdConnect(t); }
+});
 function mergeSdEntries(list) {
   const byDate = new Map(S.bw.map((e, i) => [e.date, i]));
   let added = 0, updated = 0;
