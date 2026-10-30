@@ -157,6 +157,7 @@ function lineChart(pts, opts = {}) {
   if (!pts.length) return `<div class="empty small">데이터가 아직 없어요</div>`;
   const xs = pts.map(p => +p.x), ys = pts.map(p => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs); if (opts.from && opts.from < x0) x0 = opts.from; if (x1 === x0) { x0 -= 864e5 * 7; x1 += 864e5 * 7; }
+  if (opts.ref != null) ys.push(opts.ref);
   let y0 = Math.min(...ys), y1 = Math.max(...ys); const padY = Math.max((y1 - y0) * 0.12, 1); y0 = Math.max(0, y0 - padY); y1 = y1 + padY;
   const X = x => L + (W - L - R) * (x - x0) / (x1 - x0), Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
@@ -169,6 +170,7 @@ function lineChart(pts, opts = {}) {
   }
   const u = opts.unit || '';
   s += `<text x="${W - R + 6}" y="${T + 4}">${Math.round(y1)} ${u}</text><text x="${W - R + 6}" y="${H - B}">${Math.round(y0)} ${u}</text>`;
+  if (opts.ref != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(opts.ref)}" y2="${Y(opts.ref)}" stroke="var(--purple)" stroke-dasharray="4 4" opacity=".45"/><text x="${W - R + 6}" y="${Y(opts.ref) + 4}" style="fill:var(--purple)">${Math.round(opts.ref)}</text>`;
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(+p.x).toFixed(1) + ',' + Y(p.y).toFixed(1)).join('');
   s += `<path d="${d}" fill="none" stroke="var(--purple-l)" stroke-width="2.2" stroke-linejoin="round"/>`;
   if (pts.length <= 80) pts.forEach(p => s += `<circle cx="${X(+p.x)}" cy="${Y(p.y)}" r="3.2" fill="#fff" stroke="var(--purple-l)" stroke-width="1.8"/>`);
@@ -183,12 +185,17 @@ function rangeBtns(key) {
   return `<div class="range">${RANGES.map(([k]) => `<button data-range="${esc(key)}" data-v="${k}" class="${cur === k ? 'on' : ''}">${k === 'ALL' ? '전체' : k === '1Y' ? '1년' : '3개월'}</button>`).join('')}</div>`;
 }
 function rangeFrom(key) { const r = RANGES.find(x => x[0] === (chartRange[key] || '1Y')); return r[1] ? Date.now() - r[1] * 864e5 : 0; }
-function prPoints(name, from) {
-  const h = D.exHist[name] || [];
-  let run = 0; const pts = [];
-  for (const e of h) { if (!e.rm) continue; if (e.rm > run) run = e.rm; if (+e.date >= from) pts.push({ x: e.date, y: toU(run, name) }); }
-  return pts;
+// One point per workout day: that day's own max Epley e1RM across all its sets (not a running all-time max).
+function dailyRm(name, from) {
+  const h = D.exHist[name] || []; const byDay = new Map();
+  for (const e of h) {
+    if (!e.rm || +e.date < (from || 0)) continue;
+    const k = dayKey(e.date); const cur = byDay.get(k);
+    if (!cur || e.rm > cur.rm) byDay.set(k, { rm: e.rm, date: e.date });
+  }
+  return [...byDay.values()].sort((a, b) => a.date - b.date);
 }
+function prPoints(name, from) { return dailyRm(name, from).map(d => ({ x: d.date, y: toU(d.rm, name) })); }
 
 /* ================= navigation ================= */
 let TAB = 'profile';
@@ -235,11 +242,19 @@ function renderProfile(v) {
     <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}<div class="muted tiny" style="margin-top:6px">하루 첫(아침) 기록 기준${S.sdsync.token ? ' · 심플다이어트 연동됨' : ''}</div>
   </div>
   ${S.settings.dash.map(name => {
-    const pts = prPoints(name, rangeFrom(name));
+    const from = rangeFrom(name);
+    const pts = prPoints(name, from);
+    const all = dailyRm(name, 0);
     const b = D.best[name];
-    return `<div class="card"><div class="between"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (추정 1RM)${b && b.rm ? ' · 최고 ' + fmtRm(b.rm, name) : ''}</div></div>
+    const lastD = all[all.length - 1];
+    const recent = all.filter(d => +d.date >= Date.now() - 92 * 864e5);
+    const cur = recent.length ? recent.reduce((a, d) => d.rm > a.rm ? d : a) : lastD;
+    const bestD = all.length ? all.reduce((a, d) => d.rm > a.rm ? d : a) : null;
+    return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (세션별 추정 1RM)</div></div>
       <button class="dots" data-act="ex-detail" data-name="${esc(name)}">•••</button></div>
-      <div style="margin-top:10px">${lineChart(pts, { unit: unitOf(name), from: rangeFrom(name) || undefined })}</div>${rangeBtns(name)}</div>`;
+      ${cur ? `<div style="margin-top:8px"><span class="muted small bold">현재 1RM 추정</span> <span style="font-size:26px;font-weight:800;color:var(--purple)">${fmtRm(cur.rm, name)}</span>
+        <div class="muted tiny">${recent.length ? '최근 3개월 최고' : '마지막 기록'} · ${fmtShort(cur.date)}${bestD ? ` &nbsp;|&nbsp; 역대 최고 ${fmtRm(bestD.rm, name)} (${fmtShort(bestD.date)})` : ''}</div></div>` : ''}
+      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null })}</div>${rangeBtns(name)}</div>`;
   }).join('')}
   <button class="btn light" data-act="dash-edit" style="margin-bottom:10px">＋ 차트 운동 추가</button>
   ${n === 0 ? `<div class="card empty">아직 기록이 없어요.<br>설정에서 Strong CSV를 가져오거나<br>워크아웃을 시작해보세요.<br><br><button class="btn" data-act="settings">CSV 가져오기</button></div>` : ''}`;
@@ -600,7 +615,7 @@ function exDetail(name, nested) {
     } else if (tab === 'chart') {
       const key = 'exd:' + name; const from = rangeFrom(key);
       const asc = (D.exHist[name] || []).filter(x => +x.date >= from);
-      const rmPts = asc.filter(x => x.rm).map(x => ({ x: x.date, y: toU(x.rm, name) }));
+      const rmPts = prPoints(name, from);
       const wPts = asc.filter(x => x.maxW).map(x => ({ x: x.date, y: toU(x.maxW, name) }));
       const vPts = asc.filter(x => x.vol).map(x => ({ x: x.date, y: toU(x.ex.sets.reduce((a, s) => a + (s.w || 0) * (s.r || 0), 0), name) }));
       const rPts = asc.map(x => ({ x: x.date, y: x.reps }));
@@ -708,7 +723,7 @@ function renderSettings(v) {
   </div>
   <div class="section-h">심플다이어트 체중</div>
   <div class="card" id="sdCard">${sdCardHtml()}</div>
-  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v3 · 오프라인 사용 가능</div>`;
+  <div class="muted tiny" style="text-align:center;margin:10px 0 30px">운동기록 v4 · 오프라인 사용 가능</div>`;
   $('.s-name', v).addEventListener('change', e => { S.settings.name = e.target.value.trim() || '나'; save('settings'); });
   $('.s-goal', v).addEventListener('change', e => { S.settings.goal = Math.max(1, parseInt(e.target.value) || 6); save('settings'); });
   $('.s-rest', v).addEventListener('change', e => { S.settings.rest = Math.max(0, parseInt(e.target.value) || 0); save('settings'); });
