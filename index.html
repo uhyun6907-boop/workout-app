@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="운동기록">
+<meta name="theme-color" content="#ffffff">
+<title>운동기록</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+<div id="app">
+  <main id="view"></main>
+  <div id="activeBanner" hidden></div>
+  <nav id="tabbar">
+    <button data-tab="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c.6-4.6 4-7 8.5-7s7.9 2.4 8.5 7z"/></svg><span>프로필</span></button>
+    <button data-tab="history"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10.6 3.6 2.1-.9 1.6L11 13.6V6h2z"/></svg><span>이력</span></button>
+    <button data-tab="start"><svg viewBox="0 0 24 24"><path d="M10.5 3h3v7.5H21v3h-7.5V21h-3v-7.5H3v-3h7.5z"/></svg><span>워크아웃 시작</span></button>
+    <button data-tab="exercises"><svg viewBox="0 0 24 24"><path d="M1 10h2V8h2v-2h3v12H5v-2H3v-2H1zm22 0h-2V8h-2V6h-3v12h3v-2h2v-2h2zM9 10.8h6v2.4H9z"/></svg><span>운동</span></button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.7a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg><span>설정</span></button>
+  </nav>
+  <div id="sheets"></div>
+  <div id="toast" hidden></div>
+</div>
+<script src="js/exercises.js?v=1"></script>
+<script src="js/csv.js?v=1"></script>
+<script src="js/app.js?v=1"></script>
+</body>
+</html>
