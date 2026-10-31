@@ -14,7 +14,7 @@ function idb() {
 async function dbGet(k) { const d = await idb(); return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 async function dbSet(k, v) { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
 const KEYS = ['workouts', 'templates', 'customEx', 'bw', 'settings', 'active', 'sdsync'];
-const DEFAULT_SETTINGS = { unit: 'kg', goal: 6, rest: 120, name: '나', exUnit: {}, dash: ['Squat (Barbell)', 'Bench Press (Barbell)', 'Deadlift (Barbell)', 'Sumo Deadlift (Barbell)', 'Overhead Press (Barbell)'] };
+const DEFAULT_SETTINGS = { unit: 'kg', goal: 6, rest: 120, bwSrc: 'pm', name: '나', exUnit: {}, dash: ['Squat (Barbell)', 'Bench Press (Barbell)', 'Deadlift (Barbell)', 'Sumo Deadlift (Barbell)', 'Overhead Press (Barbell)'] };
 const S = { workouts: [], templates: [], customEx: [], bw: [], settings: { ...DEFAULT_SETTINGS }, active: null, sdsync: { token: '', last: 0, count: 0, err: '' } };
 const saveTimers = {};
 function save(k, now) {
@@ -281,11 +281,8 @@ function renderProfile(v) {
   const counts = daySets.map(x => x.size);
   const labels = weeks.map(d => `${d.getMonth() + 1}.${d.getDate()}.`);
   const bwFrom = rangeFrom('bw');
-  const bwSorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1);
-  const bwDaily = []; let lastDay = '';
-  for (const e of bwSorted) { const dk = e.date.slice(0, 10); if (dk !== lastDay) { bwDaily.push(e); lastDay = dk; } } // first (morning) value per day
+  const { daily: bwDaily, last: lastBw, skipped: bwSkipped } = bwSeries();
   const bwPts = bwDaily.filter(e => +pd(e.date) >= bwFrom).map(e => ({ x: pd(e.date), y: toU(e.kg) }));
-  const lastBw = bwSorted[bwSorted.length - 1];
   v.innerHTML = `
   <div class="topbar"><div class="l"><button class="icon-btn" data-act="settings">${ICON.gear}</button></div><div class="r"></div></div>
   <h1 class="big">프로필</h1>
@@ -300,7 +297,7 @@ function renderProfile(v) {
   <div class="card">
     <div class="between"><div><h3>체중</h3><div class="sub">${lastBw ? '최근 ' + fmtW(lastBw.kg) + ' · ' + fmtShort(pd(lastBw.date)) + ' ' + lastBw.date.slice(11, 16) : '기록 없음 · 설정에서 심플다이어트 연동'}</div></div>
       <div class="row"><button class="pill" data-act="bw-list">목록</button><button class="pill" data-act="bw-add">＋</button></div></div>
-    <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}<div class="muted tiny" style="margin-top:6px">하루 첫(아침) 기록 기준${S.sdsync.token ? ' · 심플다이어트 연동됨' : ''}</div>
+    <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}<div class="muted tiny" style="margin-top:6px">${S.settings.bwSrc === 'pm' ? `오후 기록만 · 하루 중 가장 늦은 오후 값${bwSkipped ? ` · 오후 기록 없는 ${bwSkipped.toLocaleString('ko-KR')}일 제외` : ''}` : '하루 첫(아침) 기록 기준'}${S.sdsync.token ? ' · 심플다이어트 연동됨' : ''}</div>
   </div>
   ${S.settings.dash.map(name => {
     const from = rangeFrom(name);
@@ -971,9 +968,10 @@ document.addEventListener('click', e => {
   const id = t.dataset.id;
   switch (a) {
     case 'settings': go('settings'); break;
+    case 'bwsrc': S.settings.bwSrc = t.dataset.v === 'all' ? 'all' : 'pm'; save('settings'); render(); toast(S.settings.bwSrc === 'pm' ? '체중: 오후 기록만 사용' : '체중: 전체(하루 첫 기록) 사용'); break;
     case 'goal': { const g = prompt('주간 목표 (운동한 날 수)', S.settings.goal); if (g && +g > 0) { S.settings.goal = Math.round(+g); save('settings'); render(); } break; }
     case 'bw-add': {
-      const sorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1); const lastBw = sorted[sorted.length - 1];
+      const lastBw = bwSeries().last;
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
         <div class="field"><label>체중 (${S.settings.unit})</label><input class="bwv" inputmode="decimal" type="number" step="0.1" value="${lastBw ? nfmt(toU(lastBw.kg)) : ''}"></div>
         <div class="field"><label>날짜</label><input class="bwd" type="date" value="${dayKey(new Date())}"></div>`, { bottom: true });
@@ -1035,10 +1033,33 @@ document.addEventListener('click', e => {
 
 /* ================= 심플다이어트 ================= */
 let sdBusy = false;
+// Bodyweight series per the 설정 source: 'pm' = only Simple Diet 오후 slot (12:00–03:59, same rule as Simple Diet), latest per day; 'all' = first reading per day.
+function bwSlot(e) { if (e.sk && / (오전|오후)$/.test(e.sk)) return e.sk.slice(-2); const h = +e.date.slice(11, 13); return h >= 4 && h < 12 ? '오전' : '오후'; }
+function bwDayKey(e) { return e.sk && /^\d{4}-\d{2}-\d{2} /.test(e.sk) ? e.sk.slice(0, 10) : e.date.slice(0, 10); }
+function bwSeries() {
+  const sorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+  const days = new Map();
+  for (const e of sorted) { const k = bwDayKey(e); (days.get(k) || days.set(k, []).get(k)).push(e); }
+  const daily = []; let skipped = 0;
+  const late = e => { const h = +e.date.slice(11, 13); return (h < 4 ? h + 24 : h) * 60 + +e.date.slice(14, 16); };
+  for (const [k, es] of [...days.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)) {
+    if (S.settings.bwSrc === 'pm') {
+      const pm = es.filter(e => bwSlot(e) === '오후');
+      if (!pm.length) { skipped++; continue; }
+      const e = pm.reduce((a, b) => late(b) >= late(a) ? b : a);
+      daily.push({ ...e, date: k + e.date.slice(10) }); // plot on its Simple Diet day
+    } else daily.push(es[0]);
+  }
+  const last = S.settings.bwSrc === 'pm' ? daily[daily.length - 1] : sorted[sorted.length - 1];
+  return { daily, last, skipped };
+}
 function sdCardHtml() {
   const z = S.sdsync; const n = S.bw.filter(e => e.src === 'sd').length;
   const last = z.last ? new Date(z.last) : null;
-  return `<div class="muted small" style="margin-bottom:10px">심플다이어트 체중 기록 ${n.toLocaleString('ko-KR')}개가 이 앱에 있어요. 프로필 체중 차트는 하루 첫(아침) 기록으로 그려요.</div>
+  return `<div class="muted small" style="margin-bottom:10px">심플다이어트 체중 기록 ${n.toLocaleString('ko-KR')}개가 이 앱에 있어요.</div>
+  <div class="bold" style="margin-bottom:6px">체중 차트에 쓸 기록</div>
+  <div class="range" style="margin:0 0 6px"><button data-act="bwsrc" data-v="pm" class="${S.settings.bwSrc === 'pm' ? 'on' : ''}">오후만</button><button data-act="bwsrc" data-v="all" class="${S.settings.bwSrc !== 'pm' ? 'on' : ''}">전체</button></div>
+  <div class="muted tiny" style="margin-bottom:12px;line-height:1.5">${S.settings.bwSrc === 'pm' ? '심플다이어트의 오후 기록만 써요 (하루에 여러 개면 가장 늦은 값). 오후 기록이 없는 날은 빠져요.' : '하루 첫(아침) 기록을 써요.'}</div>
   <label class="btn light" style="margin-bottom:12px">심플다이어트 CSV 가져오기<input type="file" accept=".csv,text/csv,text/plain" class="f-sdcsv" hidden></label>
   <div class="bold" style="margin-bottom:4px">심플다이어트 연동 (읽기 전용 자동 동기화)</div>
   <div class="muted tiny" style="line-height:1.5;margin-bottom:8px">심플다이어트가 동기화하는 GitHub 저장소 <b>uhyun6907-boop/sd-data</b>의 records.json을 읽어와요. 이 앱은 sd-data에 절대 쓰지 않아요.<br>심플다이어트에 넣은 토큰을 그대로 붙여넣어도 되고, <b>sd-data 저장소에 Contents 읽기(Read-only) 권한만 있는 fine-grained 토큰</b>이면 충분해요. 토큰은 이 기기에만 저장돼요 (백업 파일에도 안 들어가요).</div>
