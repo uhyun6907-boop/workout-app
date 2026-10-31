@@ -134,13 +134,69 @@ function lastPerformance(name, excludeId) {
 }
 
 /* ================= charts (SVG) ================= */
-function barChart(vals, labels, goal) {
+// Touch/mouse scrubbing: finger on a chart shows the nearest point (guide line + dot + bubble).
+const ChartTip = (() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  let cur = null, hideT = 0, touch = null;
+  const el = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  function clear() { clearTimeout(hideT); if (cur) { const g = cur.querySelector('g.tip'); if (g) g.remove(); } cur = null; }
+  function show(svg, clientX) {
+    let pts; try { pts = JSON.parse(svg.dataset.tip || '[]'); } catch (e) { return; }
+    if (!pts.length) return;
+    clearTimeout(hideT);
+    if (cur && cur !== svg) clear();
+    cur = svg;
+    const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal, sx = (clientX - r.left) * vb.width / r.width;
+    let best = pts[0]; for (const p of pts) if (Math.abs(p[0] - sx) < Math.abs(best[0] - sx)) best = p;
+    const [x, y, text] = best, [L, T, R, B] = svg.dataset.b.split(',').map(Number);
+    let g = svg.querySelector('g.tip'); if (g) g.remove();
+    g = el('g', { class: 'tip', 'pointer-events': 'none' });
+    g.append(el('line', { x1: x, x2: x, y1: T - 4, y2: B, stroke: '#1C1C1E', 'stroke-width': 1, 'stroke-dasharray': '3 3', opacity: .45 }));
+    g.append(el('circle', { cx: x, cy: y, r: 5.5, fill: 'var(--purple)', stroke: '#fff', 'stroke-width': 2 }));
+    const t = el('text', { class: 'tip-t', y: 0, 'text-anchor': 'middle' }); t.textContent = text; g.append(t);
+    svg.append(g);
+    let w = 0; try { w = t.getComputedTextLength(); } catch (e) {} if (!w) w = text.length * 6.6;
+    const bw = w + 16, bh = 22;
+    let bx = Math.max(0, Math.min(vb.width - bw, x - bw / 2));
+    let by = y - bh - 10; if (by < -6) by = Math.min(y + 10, B - bh);
+    const rect = el('rect', { x: bx, y: by, width: bw, height: bh, rx: 7, fill: '#1C1C1E' });
+    g.insertBefore(rect, t); t.setAttribute('x', bx + bw / 2); t.setAttribute('y', by + 15);
+  }
+  const chartOf = e => e.target && e.target.closest && e.target.closest('svg.chart[data-tip]');
+  document.addEventListener('touchstart', e => {
+    const svg = chartOf(e);
+    if (!svg) { if (cur) clear(); return; }
+    const p = e.touches[0]; touch = { svg, x: p.clientX, y: p.clientY, mode: '' };
+    show(svg, p.clientX);
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!touch) return;
+    const p = e.touches[0], dx = Math.abs(p.clientX - touch.x), dy = Math.abs(p.clientY - touch.y);
+    if (!touch.mode && (dx > 6 || dy > 6)) touch.mode = dx > dy ? 'scrub' : 'scroll';
+    if (touch.mode === 'scroll') { clear(); touch = null; return; }
+    if (e.cancelable) e.preventDefault(); // horizontal scrub only: keep the page still
+    show(touch.svg, p.clientX);
+  }, { passive: false });
+  const end = () => { if (!touch) return; touch = null; clearTimeout(hideT); hideT = setTimeout(clear, 2500); };
+  document.addEventListener('touchend', end, { passive: true });
+  document.addEventListener('touchcancel', end, { passive: true });
+  document.addEventListener('mousemove', e => {
+    if (touch) return; const svg = chartOf(e);
+    if (svg) show(svg, e.clientX); else if (cur) clear();
+  });
+  return { clear };
+})();
+const numFmt = v => (Math.round(v * 10) / 10).toLocaleString('ko-KR', { maximumFractionDigits: 1 });
+const ymdDot = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const tipAttr = (pts, b) => ` data-tip="${esc(JSON.stringify(pts))}" data-b="${b.join(',')}"`;
+function barChart(vals, labels, goal, tips) {
   const W = 340, H = 170, L = 6, R = 34, T = 10, B = 24;
   const max = Math.max(goal + 2, ...vals, 4);
   const top = Math.ceil(max / 2) * 2;
   const cw = (W - L - R) / vals.length, bw = Math.min(26, cw * 0.62);
   const y = v => T + (H - T - B) * (1 - v / top);
-  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
+  const tp = vals.map((v, i) => [+(L + cw * i + cw / 2).toFixed(1), +y(v).toFixed(1), (tips && tips[i]) || `${labels[i]} · ${v}`]);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}"${tipAttr(tp, [L, T, W - R, H - B])}>`;
   for (let i = 0; i <= 4; i++) { const v = top * i / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#EEE"/>`; }
   s += `<text x="${W - R + 6}" y="${y(top) + 4}">${top}</text><text x="${W - R + 6}" y="${y(0) + 4}">0</text>`;
   vals.forEach((v, i) => {
@@ -160,7 +216,9 @@ function lineChart(pts, opts = {}) {
   if (opts.ref != null) ys.push(opts.ref);
   let y0 = Math.min(...ys), y1 = Math.max(...ys); const padY = Math.max((y1 - y0) * 0.12, 1); y0 = Math.max(0, y0 - padY); y1 = y1 + padY;
   const X = x => L + (W - L - R) * (x - x0) / (x1 - x0), Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
-  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
+  const u0 = opts.unit || '';
+  const tp = pts.map(p => [+X(+p.x).toFixed(1), +Y(p.y).toFixed(1), `${ymdDot(new Date(+p.x))} · ${numFmt(opts.round ? Math.round(p.y / opts.round) * opts.round : p.y)}${u0 === '렙' ? '렙' : u0 ? ' ' + u0 : ''}`]);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}"${tipAttr(tp, [L, T, W - R, H - B])}>`;
   for (let i = 0; i <= 3; i++) { const yy = T + (H - T - B) * i / 3; s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#F0F0F0"/>`; }
   const span = x1 - x0, nl = 4;
   for (let i = 0; i <= nl; i++) {
@@ -237,7 +295,7 @@ function renderProfile(v) {
   <div class="card">
     <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 운동한 날 수 · 목표 주 ${S.settings.goal}일</div></div>
       <button class="pill" data-act="goal">◎ 목표</button></div>
-    <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal)}</div>
+    <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal, weeks.map((d, i) => `${ymdDot(d)} 주 · ${counts[i]}일 운동`))}</div>
   </div>
   <div class="card">
     <div class="between"><div><h3>체중</h3><div class="sub">${lastBw ? '최근 ' + fmtW(lastBw.kg) + ' · ' + fmtShort(pd(lastBw.date)) + ' ' + lastBw.date.slice(11, 16) : '기록 없음 · 설정에서 심플다이어트 연동'}</div></div>
@@ -257,7 +315,7 @@ function renderProfile(v) {
       <button class="dots" data-act="ex-detail" data-name="${esc(name)}">•••</button></div>
       ${cur ? `<div style="margin-top:8px"><span class="muted small bold">현재 1RM 추정</span> <span style="font-size:26px;font-weight:800;color:var(--purple)">${fmtRm(cur.rm, name)}</span>
         <div class="muted tiny">${recent.length ? '최근 3개월 최고' : '마지막 기록'} · ${fmtShort(cur.date)}${bestD ? ` &nbsp;|&nbsp; 역대 최고 ${fmtRm(bestD.rm, name)} (${fmtShort(bestD.date)})` : ''}</div></div>` : ''}
-      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null })}</div>${rangeBtns(name)}</div>`;
+      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), round: 0.5, from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null })}</div>${rangeBtns(name)}</div>`;
   }).join('')}
   <button class="btn light" data-act="dash-edit" style="margin-bottom:10px">＋ 차트 운동 추가</button>
   ${n === 0 ? `<div class="card empty">아직 기록이 없어요.<br>설정에서 Strong CSV를 가져오거나<br>워크아웃을 시작해보세요.<br><br><button class="btn" data-act="settings">CSV 가져오기</button></div>` : ''}`;
@@ -715,7 +773,7 @@ function exDetail(name, nested) {
       const wPts = asc.filter(x => x.maxW).map(x => ({ x: x.date, y: toU(x.maxW, name) }));
       const vPts = asc.filter(x => x.vol).map(x => ({ x: x.date, y: toU(x.ex.sets.reduce((a, s) => a + (s.w || 0) * (s.r || 0), 0), name) }));
       const rPts = asc.map(x => ({ x: x.date, y: x.reps }));
-      body.innerHTML = rangeBtns(key) + (rmPts.length ? `<div class="bold" style="margin-top:12px">추정 1RM</div>${lineChart(rmPts, { unit: unitOf(name) })}<div class="bold" style="margin-top:12px">최고 무게</div>${lineChart(wPts, { unit: unitOf(name) })}<div class="bold" style="margin-top:12px">총 볼륨</div>${lineChart(vPts, { unit: unitOf(name) })}` : `<div class="bold" style="margin-top:12px">최고 렙</div>${lineChart(rPts, { unit: '렙' })}`);
+      body.innerHTML = rangeBtns(key) + (rmPts.length ? `<div class="bold" style="margin-top:12px">추정 1RM</div>${lineChart(rmPts, { unit: unitOf(name), round: 0.5 })}<div class="bold" style="margin-top:12px">최고 무게</div>${lineChart(wPts, { unit: unitOf(name) })}<div class="bold" style="margin-top:12px">총 볼륨</div>${lineChart(vPts, { unit: unitOf(name) })}` : `<div class="bold" style="margin-top:12px">최고 렙</div>${lineChart(rPts, { unit: '렙' })}`);
     } else {
       if (!b || !h.length) { body.innerHTML = '<div class="empty small">기록 없음</div>'; return; }
       const find = f => { let best = null; for (const x of h) if (!best || f(x) > f(best)) best = x; return best; };

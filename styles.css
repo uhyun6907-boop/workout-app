@@ -145,3 +145,5 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .rest-row.past:not(.running) .rest-time{color:var(--muted)}
 .rest-input{width:70px;text-align:center;border:1.5px solid var(--blue);outline:none}
 #toast button{background:none;border:0;font:inherit}
+.chart[data-tip]{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.chart text.tip-t{fill:#fff;font-size:12px;font-weight:700}
