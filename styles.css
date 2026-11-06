@@ -153,9 +153,9 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 
 .aw-title-row{display:flex;align-items:center;gap:8px;min-width:0}
 .aw-title-row .aw-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rest-quick{display:flex;align-items:center;gap:2px;flex:none;max-width:58%;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:2px 0}
-.rest-quick::-webkit-scrollbar{display:none}
-.rest-quick button{flex:none;height:32px;padding:0 6px;border:0;background:transparent;color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.rest-quick{display:flex;flex-direction:column;align-items:flex-end;gap:0;flex:none;flex-shrink:0}
+
+.rest-quick button{flex:none;height:26px;padding:0 5px;border:0;background:transparent;color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:26px}
 .rest-quick button:active{opacity:.45}
 .full .sheet-handle{display:flex;justify-content:center;align-items:center;height:18px;margin:0 -16px;cursor:grab}
 .full .sheet-handle i{width:36px;height:5px;border-radius:99px;background:#D1D1D6;display:block}
@@ -164,3 +164,4 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .full.dragging .fbody{-webkit-overflow-scrolling:auto}
 .sets .prev-btn{color:var(--muted);font-size:13px;font-weight:600;padding:6px 4px;border-radius:8px;min-height:32px;white-space:nowrap}
 .sets .prev-btn:active,.sets .prev-btn.flash{background:var(--blue-l);color:var(--blue)}
+.rest-quick-row{display:flex;align-items:center;justify-content:flex-end;gap:0}

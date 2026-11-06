@@ -580,7 +580,7 @@ function drawActive() {
   const scroll = el.querySelector('.fbody') ? el.querySelector('.fbody').scrollTop : 0;
   el.innerHTML = `<div class="fhead"><div class="sheet-handle" aria-hidden="true"><i></i></div><div class="fhead-row"><div class="bold" id="awClock" style="font-variant-numeric:tabular-nums">${fmtClock((Date.now() - A.startTs) / 1000)}</div><button class="pill" style="background:var(--green);color:#fff" data-a="finish">완료</button></div></div>
   <div class="fbody">
-    <div class="aw-title-row"><input class="aw-name" value="${esc(A.name)}" style="font-size:24px;font-weight:800;border:0;outline:none;padding:6px 0"><div class="rest-quick">${[[30,'30초'],[60,'1분'],[90,'1:30'],[120,'2분'],[150,'2:30'],[180,'3분']].map(([t,l]) => `<button type="button" data-a="rest-now" data-rn="${t}">${l}</button>`).join('')}</div></div>
+    <div class="aw-title-row"><input class="aw-name" value="${esc(A.name)}" style="font-size:24px;font-weight:800;border:0;outline:none;padding:6px 0"><div class="rest-quick"><div class="rest-quick-row">${[[30,'30초'],[60,'1분'],[90,'1:30']].map(([t,l]) => `<button type="button" data-a="rest-now" data-rn="${t}">${l}</button>`).join('')}</div><div class="rest-quick-row">${[[120,'2분'],[150,'2:30'],[180,'3분']].map(([t,l]) => `<button type="button" data-a="rest-now" data-rn="${t}">${l}</button>`).join('')}</div></div></div>
     <textarea class="aw-note" placeholder="워크아웃 노트" rows="1" style="width:100%;border:0;outline:none;resize:none;color:var(--sub);font-size:15px">${esc(A.note || '')}</textarea>
     ${A.exercises.length ? '' : '<div class="empty small">아래 “운동 추가”를 눌러 시작하세요</div>'}
     ${A.exercises.map((e, ei) => {
