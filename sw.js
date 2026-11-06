@@ -1,7 +1,7 @@
 // 운동기록 service worker (scope /workout-app/)
-const VERSION = 15;
+const VERSION = 16;
 const CACHE = 'workout-app-v' + VERSION;
-const ASSETS = ['./', 'index.html', 'styles.css?v=15', 'js/exercises.js?v=15', 'js/csv.js?v=15', 'js/sd.js?v=15', 'js/app.js?v=15', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const ASSETS = ['./', 'index.html', 'styles.css?v=16', 'js/exercises.js?v=16', 'js/csv.js?v=16', 'js/sd.js?v=16', 'js/app.js?v=16', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => {
   // cache:'reload' so install never picks up stale copies from the 10-minute HTTP cache
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));

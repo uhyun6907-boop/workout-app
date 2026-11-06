@@ -86,7 +86,7 @@ h1.big{font-size:34px;font-weight:800;margin:6px 0 14px;letter-spacing:-.5px}
 .sets tr.done td:first-child{border-radius:8px 0 0 8px}.sets tr.done td:last-child{border-radius:0 8px 8px 0}
 .sets input{width:100%;max-width:74px;text-align:center;border:0;background:var(--gray);border-radius:7px;padding:6px 2px;font-size:16px;font-weight:600;outline:none}
 .sets tr.done input{background:transparent}
-.sets .prev{color:var(--muted);font-size:13px;white-space:nowrap}
+.sets .prev{color:var(--muted);font-size:14px;font-weight:700;white-space:nowrap}
 .sets .stype{font-weight:700;width:30px;height:28px;border-radius:7px;background:var(--gray)}
 .stype.W{color:#E6A700}.stype.D{color:var(--purple)}.stype.F{color:var(--red)}
 .check{width:34px;height:28px;border-radius:7px;background:var(--gray);display:inline-flex;align-items:center;justify-content:center}
@@ -162,7 +162,7 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .full .fhead-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:28px}
 .full.dragging{touch-action:none}
 .full.dragging .fbody{-webkit-overflow-scrolling:auto}
-.sets .prev-btn{color:var(--muted);font-size:13px;font-weight:600;padding:6px 4px;border-radius:8px;min-height:32px;white-space:nowrap}
+.sets .prev-btn{color:var(--muted);font-size:14px;font-weight:700;padding:6px 4px;border-radius:8px;min-height:32px;white-space:nowrap}
 .sets .prev-btn:active,.sets .prev-btn.flash{background:var(--blue-l);color:var(--blue)}
 .rest-quick-row{display:flex;align-items:center;justify-content:flex-end;gap:0}
 
@@ -175,7 +175,7 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .swipe-cols{display:grid;grid-template-columns:34px minmax(52px,1fr) minmax(58px,74px) minmax(48px,60px) 38px;gap:3px;padding:2px 3px;align-items:center}
 .swipe-cols input{width:100%;max-width:74px;justify-self:center;text-align:center;border:0;background:var(--gray);border-radius:7px;padding:6px 2px;font-size:16px;font-weight:600;outline:none}
 .swipe-front.done input{background:transparent}
-.swipe-cols .prev{color:var(--muted);font-size:13px;white-space:nowrap;text-align:center}
+.swipe-cols .prev{color:var(--muted);font-size:14px;font-weight:700;white-space:nowrap;text-align:center}
 .swipe-row.swiping{touch-action:none}
 .rest-row{padding:0 3px 2px}
 .swipe-row.open .swipe-actions{z-index:2}
