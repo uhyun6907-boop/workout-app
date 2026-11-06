@@ -504,6 +504,9 @@ function openActive(opts = {}) {
     bindSetSwipe(el);
   }
   updateBanner();
+  // never leave a sideways translate on the sheet / body from a botched swipe
+  el.style.removeProperty('translate');
+  if (/translateX/.test(el.style.transform || '')) el.style.transform = (el.style.transform || '').replace(/translateX\([^)]*\)/g, '').trim();
   const H = window.innerHeight;
   const snapIn = (from) => {
     el.style.transition = 'none';
@@ -531,8 +534,9 @@ function bindSheetDrag(el) {
   };
   const start = e => {
     if (drag || (e.touches && e.touches.length > 1)) return;
-    const kind = canStart(e.target); if (!kind) return;
     const t = pt(e);
+    if (t.clientX < 20) return; // ignore iOS left-edge back gesture
+    const kind = canStart(e.target); if (!kind) return;
     drag = { y0: t.clientY, x0: t.clientX, dy: 0, t0: Date.now(), mode: kind === 'head' ? 'armed' : 'pending', pointerId: e.pointerId };
     if (e.pointerId != null && el.setPointerCapture) try { el.setPointerCapture(e.pointerId); } catch (err) {}
   };
@@ -601,60 +605,86 @@ function bindSetSwipe(root) {
     const f = front(openEl); if (f) { f.style.transition = 'transform .22s cubic-bezier(.2,.85,.25,1)'; f.style.transform = ''; }
     openEl.classList.remove('open'); openEl = null;
   };
-  const pt = e => e.touches ? e.touches[0] : e;
-  root.addEventListener('touchstart', e => {
-    if (e.touches.length > 1) return;
-    const row = e.target.closest('.swipe-row');
-    if (!row || e.target.closest('input, textarea, .swipe-del')) {
+  const pt = e => (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+  const lockSwipe = () => {
+    if (!drag || drag.mode === 'swipe') return;
+    drag.mode = 'swipe';
+    const f = front(drag.row); if (f) f.style.transition = 'none';
+    drag.row.classList.add('swiping');
+    // never leave a stray translate on the sheet / exercise block
+    const sheet = document.getElementById('activeSheet');
+    if (sheet) { sheet.style.removeProperty('translate'); if (/translateX/.test(sheet.style.transform || '')) sheet.style.transform = sheet.style.transform.replace(/translateX\([^)]*\)/g, '').trim(); }
+    // iOS: blur focused input so it stops cancelling the gesture
+    try { if (document.activeElement && drag.row.contains(document.activeElement)) document.activeElement.blur(); } catch (err) {}
+  };
+  const onStart = e => {
+    if (e.touches && e.touches.length > 1) return;
+    const t = pt(e);
+    if (t && t.clientX < 20) return; // ignore iOS left-edge back swipe
+    const row = e.target.closest && e.target.closest('.swipe-row');
+    if (!row || e.target.closest('.swipe-del')) {
       if (!e.target.closest('.swipe-row.open') && !e.target.closest('.swipe-del')) closeOpen();
       return;
     }
     if (openEl && openEl !== row) closeOpen();
-    const t = pt(e);
-    drag = { row, x0: t.clientX, y0: t.clientY, dx: 0, mode: 'pending', t0: Date.now(), base: openEl === row ? -ACTION : 0 };
-  }, { passive: true });
-  root.addEventListener('touchmove', e => {
+    drag = {
+      row, x0: t.clientX, y0: t.clientY, dx: 0, rawDx: 0, mode: 'pending', t0: Date.now(),
+      base: openEl === row ? -ACTION : 0,
+      fromInput: !!(e.target.closest && e.target.closest('input, textarea'))
+    };
+  };
+  const onMove = e => {
     if (!drag) return;
-    const t = pt(e), dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
+    if (e.touches && e.touches.length > 1) { settle(true); return; }
+    const t = pt(e); if (!t) return;
+    const dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
     if (drag.mode === 'pending') {
-      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // vertical scroll / sheet
-      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) + 2) {
-        drag.mode = 'swipe';
-        front(drag.row).style.transition = 'none';
-        drag.row.classList.add('swiping');
-      } else return;
+      // vertical wins → let the list/sheet scroll
+      if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) { drag = null; return; }
+      // horizontal lock (including starts on kg/reps inputs)
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) lockSwipe();
+      else return;
     }
     if (drag.mode !== 'swipe') return;
     if (e.cancelable) e.preventDefault();
-    drag.dx = Math.min(0, Math.max(-ACTION * 1.35, drag.base + dx));
-    front(drag.row).style.transform = `translateX(${drag.dx}px)`;
-  }, { passive: false });
-  const end = () => {
+    drag.rawDx = Math.min(0, drag.base + dx);
+    drag.dx = Math.max(-ACTION * 1.35, drag.rawDx);
+    const f = front(drag.row); if (f) f.style.transform = `translateX(${drag.dx}px)`;
+  };
+  const settle = (cancelled) => {
     if (!drag) return;
-    const { row, dx, t0, mode } = drag; drag = null;
+    const { row, dx, rawDx, t0, mode } = drag; drag = null;
     row.classList.remove('swiping');
     const f = front(row); if (!f) return;
+    // tiny move on an input = leave focus/tap alone
     if (mode !== 'swipe') return;
-    const dt = Math.max(1, Date.now() - t0), vel = Math.abs(dx) / dt;
+    const slide = rawDx != null ? rawDx : dx;
+    const dt = Math.max(1, Date.now() - t0), vel = Math.abs(slide) / dt;
     f.style.transition = 'transform .22s cubic-bezier(.2,.85,.25,1)';
     const rowW = row.getBoundingClientRect().width;
-    if (dx < -rowW * 0.5 || (dx < -ACTION * 1.15 && vel > 0.65)) {
-      // long/fast swipe → delete outright
+    if (!cancelled && (slide < -rowW * 0.5 || (slide < -ACTION * 1.15 && vel > 0.55))) {
       f.style.transform = `translateX(${-rowW}px)`;
       setTimeout(() => {
         if (row.dataset.ws) row.querySelector('.swipe-del')?.click();
         else deleteSet(+row.dataset.ei, +row.dataset.si);
       }, 180);
       openEl = null;
-    } else if (dx < -ACTION * 0.35) {
+    } else if (!cancelled && dx < -ACTION * 0.35) {
       f.style.transform = `translateX(${-ACTION}px)`;
       row.classList.add('open'); openEl = row;
     } else {
-      f.style.transform = ''; row.classList.remove('open'); if (openEl === row) openEl = null;
+      f.style.transform = row.classList.contains('open') ? `translateX(${-ACTION}px)` : '';
+      if (!row.classList.contains('open') && openEl === row) openEl = null;
     }
   };
-  root.addEventListener('touchend', end, { passive: true });
-  root.addEventListener('touchcancel', () => { if (!drag) return; const row = drag.row; drag = null; row.classList.remove('swiping'); const f = front(row); if (f) { f.style.transition = 'transform .22s'; f.style.transform = row.classList.contains('open') ? `translateX(${-ACTION}px)` : ''; } }, { passive: true });
+  const onEnd = () => settle(false);
+  const onCancel = () => settle(true);
+  // capture + non-passive move so iOS Safari can't swallow the horizontal gesture
+  root.addEventListener('touchstart', onStart, { passive: true, capture: true });
+  root.addEventListener('touchmove', onMove, { passive: false, capture: true });
+  root.addEventListener('touchend', onEnd, { passive: true, capture: true });
+  root.addEventListener('touchcancel', onCancel, { passive: true, capture: true });
+  root.addEventListener('pointercancel', onCancel, { passive: true, capture: true });
   root.addEventListener('click', e => {
     if (e.target.closest('.swipe-del')) return;
     if (openEl && !e.target.closest('.swipe-row.open')) closeOpen();
@@ -1221,6 +1251,7 @@ function bindBannerOpen(ban) {
   ban.addEventListener('touchstart', e => {
     if (!S.active || $('#activeSheet') || e.touches.length > 1) return;
     const t = pt(e);
+    if (t.clientX < 20) return;
     drag = { y0: t.clientY, dy: 0, t0: Date.now(), moved: false, el: null };
   }, { passive: true });
   ban.addEventListener('touchmove', e => {
