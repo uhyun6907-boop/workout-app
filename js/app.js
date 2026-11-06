@@ -489,24 +489,41 @@ function startWorkout(from) {
   restTimer = null;
   save('active', true); closeAllModals(); openActive();
 }
-function openActive() {
+function openActive(opts = {}) {
   if (!S.active) return;
   closeAllModals();
   if ($('#activeSheet')) return;
   const el = document.createElement('div'); el.className = 'full'; el.id = 'activeSheet';
   $('#sheets').appendChild(el);
   drawActive();
-  el.addEventListener('click', activeClick);
-  el.addEventListener('input', activeInput);
-  bindSheetDrag(el);
+  if (!el._awBound) {
+    el._awBound = true;
+    el.addEventListener('click', activeClick);
+    el.addEventListener('input', activeInput);
+    bindSheetDrag(el);
+    bindSetSwipe(el);
+  }
   updateBanner();
+  const H = window.innerHeight;
+  const snapIn = (from) => {
+    el.style.transition = 'none';
+    el.style.transform = `translateY(${Math.max(0, from)}px)`;
+    el.style.opacity = String(Math.max(0.35, 1 - from / (H * 0.9)));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s cubic-bezier(.2,.85,.25,1)';
+      el.style.transform = ''; el.style.opacity = '';
+    }));
+  };
+  if (opts.fromY != null) snapIn(opts.fromY);
+  else if (opts.animate !== false) snapIn(H);
 }
 // Swipe-down to minimize (iOS sheet style). Starts from handle/header, or from body only when scrolled to top.
 function bindSheetDrag(el) {
+  if (el._sheetDragBound) return; el._sheetDragBound = true;
   let drag = null;
   const pt = e => e.touches ? e.touches[0] : e;
   const canStart = (target) => {
-    if (!target || target.closest('input, textarea, select, button, a, .rest-quick, label')) return false;
+    if (!target || target.closest('input, textarea, select, button, a, .rest-quick, label, .swipe-row')) return false;
     if (target.closest('.fhead, .sheet-handle')) return 'head';
     const body = el.querySelector('.fbody');
     if (body && body.contains(target) && body.scrollTop <= 1) return 'body';
@@ -547,12 +564,12 @@ function bindSheetDrag(el) {
     const body = el.querySelector('.fbody'); if (body) body.style.overflow = '';
     el.classList.remove('dragging');
     if (dismiss) {
-      el.style.transition = 'transform .22s ease-out, opacity .2s ease-out';
+      el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s cubic-bezier(.2,.85,.25,1)';
       el.style.transform = `translateY(${H}px)`; el.style.opacity = '0';
       const gone = () => { el.removeEventListener('transitionend', gone); closeActive(); render(); };
-      el.addEventListener('transitionend', gone); setTimeout(gone, 280);
+      el.addEventListener('transitionend', gone); setTimeout(gone, 320);
     } else {
-      el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s';
+      el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s cubic-bezier(.2,.85,.25,1)';
       el.style.transform = ''; el.style.opacity = '';
     }
     drag = null;
@@ -573,6 +590,91 @@ function bindSheetDrag(el) {
   el.addEventListener('pointerup', e => { if (e.pointerType === 'touch') return; finish(); });
   el.addEventListener('pointercancel', e => { if (e.pointerType === 'touch') return; cancel(); });
 }
+// Swipe-left to delete a set (iOS Mail / Strong style)
+function bindSetSwipe(root) {
+  if (root._setSwipeBound) return; root._setSwipeBound = true;
+  let drag = null, openEl = null;
+  const ACTION = 84; // revealed delete width
+  const front = el => el && el.querySelector('.swipe-front');
+  const closeOpen = () => {
+    if (!openEl) return;
+    const f = front(openEl); if (f) { f.style.transition = 'transform .22s cubic-bezier(.2,.85,.25,1)'; f.style.transform = ''; }
+    openEl.classList.remove('open'); openEl = null;
+  };
+  const pt = e => e.touches ? e.touches[0] : e;
+  root.addEventListener('touchstart', e => {
+    if (e.touches.length > 1) return;
+    const row = e.target.closest('.swipe-row');
+    if (!row || e.target.closest('input, textarea, .swipe-del')) {
+      if (!e.target.closest('.swipe-row.open') && !e.target.closest('.swipe-del')) closeOpen();
+      return;
+    }
+    if (openEl && openEl !== row) closeOpen();
+    const t = pt(e);
+    drag = { row, x0: t.clientX, y0: t.clientY, dx: 0, mode: 'pending', t0: Date.now(), base: openEl === row ? -ACTION : 0 };
+  }, { passive: true });
+  root.addEventListener('touchmove', e => {
+    if (!drag) return;
+    const t = pt(e), dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
+    if (drag.mode === 'pending') {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // vertical scroll / sheet
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) + 2) {
+        drag.mode = 'swipe';
+        front(drag.row).style.transition = 'none';
+        drag.row.classList.add('swiping');
+      } else return;
+    }
+    if (drag.mode !== 'swipe') return;
+    if (e.cancelable) e.preventDefault();
+    drag.dx = Math.min(0, Math.max(-ACTION * 1.35, drag.base + dx));
+    front(drag.row).style.transform = `translateX(${drag.dx}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!drag) return;
+    const { row, dx, t0, mode } = drag; drag = null;
+    row.classList.remove('swiping');
+    const f = front(row); if (!f) return;
+    if (mode !== 'swipe') return;
+    const dt = Math.max(1, Date.now() - t0), vel = Math.abs(dx) / dt;
+    f.style.transition = 'transform .22s cubic-bezier(.2,.85,.25,1)';
+    const rowW = row.getBoundingClientRect().width;
+    if (dx < -rowW * 0.5 || (dx < -ACTION * 1.15 && vel > 0.65)) {
+      // long/fast swipe → delete outright
+      f.style.transform = `translateX(${-rowW}px)`;
+      setTimeout(() => {
+        if (row.dataset.ws) row.querySelector('.swipe-del')?.click();
+        else deleteSet(+row.dataset.ei, +row.dataset.si);
+      }, 180);
+      openEl = null;
+    } else if (dx < -ACTION * 0.35) {
+      f.style.transform = `translateX(${-ACTION}px)`;
+      row.classList.add('open'); openEl = row;
+    } else {
+      f.style.transform = ''; row.classList.remove('open'); if (openEl === row) openEl = null;
+    }
+  };
+  root.addEventListener('touchend', end, { passive: true });
+  root.addEventListener('touchcancel', () => { if (!drag) return; const row = drag.row; drag = null; row.classList.remove('swiping'); const f = front(row); if (f) { f.style.transition = 'transform .22s'; f.style.transform = row.classList.contains('open') ? `translateX(${-ACTION}px)` : ''; } }, { passive: true });
+  root.addEventListener('click', e => {
+    if (e.target.closest('.swipe-del')) return;
+    if (openEl && !e.target.closest('.swipe-row.open')) closeOpen();
+  }, true);
+}
+function deleteSet(ei, si) {
+  const A = S.active; if (!A || !A.exercises[ei]) return;
+  const ex = A.exercises[ei]; if (!ex.sets[si]) return;
+  const snap = { ei, si, set: { ...ex.sets[si] }, name: ex.name };
+  if (restTimer && restTimer.ei === ei && restTimer.si === si) restTimer = null;
+  else if (restTimer && restTimer.ei === ei && restTimer.si > si) restTimer.si--;
+  ex.sets.splice(si, 1);
+  save('active'); drawActive();
+  toastAction('세트 삭제됨', '실행 취소', () => {
+    const ex2 = S.active && S.active.exercises[snap.ei];
+    if (!ex2 || ex2.name !== snap.name) return toast('실행 취소할 수 없어요');
+    ex2.sets.splice(Math.min(snap.si, ex2.sets.length), 0, snap.set);
+    save('active'); drawActive(); toast('삭제 취소됨');
+  }, 4000);
+}
 function closeActive() { const el = $('#activeSheet'); if (el) el.remove(); updateBanner(); }
 function normalIndex(sets, si) { let n = 0; for (let i = 0; i <= si; i++) if (sets[i].type !== 'W') n++; return n; }
 function drawActive() {
@@ -586,17 +688,20 @@ function drawActive() {
     ${A.exercises.map((e, ei) => {
       const lp = lastPerformance(e.name); const u = unitOf(e.name);
       return `<div class="aw-ex"><div class="between"><button class="name" data-a="exinfo" data-ei="${ei}" style="text-align:left">${esc(e.name)}</button><button class="dots" data-a="exmenu" data-ei="${ei}">•••</button></div>
-      <table class="sets"><tr><th style="width:34px">세트</th><th>이전</th><th>${u}</th><th>렙</th><th style="width:38px">✓</th><th style="width:20px"></th></tr>
+      <div class="sets-head"><span>세트</span><span>이전</span><span>${u}</span><span>렙</span><span>✓</span></div>
       ${e.sets.map((s, si) => {
         const p = lp && lp.ex.sets[si];
         const ph = p ? p : (s.pw || s.pr ? { w: s.pw, r: s.pr } : null);
-        return `<tr class="${s.done ? 'done' : ''}" data-ei="${ei}" data-si="${si}"><td><button class="stype ${s.type}" data-a="stype">${s.type === 'n' ? normalIndex(e.sets, si) : s.type}</button></td>
-        <td class="prev">${p ? `<button type="button" class="prev-btn" data-a="useprev">${esc(p.w ? nfmt(toU(p.w, e.name)) + ' × ' + nfmt(p.r) : nfmt(p.r) + '렙')}</button>` : '—'}</td>
-        <td><input inputmode="decimal" data-f="w" value="${s.w === '' ? '' : nfmt(toU(s.w, e.name))}" placeholder="${ph && ph.w ? nfmt(toU(ph.w, e.name)) : ''}"></td>
-        <td><input inputmode="numeric" data-f="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}"></td>
-        <td><button class="check" data-a="check">${ICON.check}</button></td><td><button class="del" data-a="delset">−</button></td></tr>
-        <tr class="rest-row ${s.done ? 'past' : ''}" data-rei="${ei}" data-rsi="${si}"><td colspan="6"><div class="rest-line"><i></i><button class="rest-time" data-a="restedit">${fmtClock(setRest(e, s))}</button></div></td></tr>`;
-      }).join('')}</table>
+        return `<div class="swipe-row" data-ei="${ei}" data-si="${si}"><div class="swipe-actions"><button type="button" class="swipe-del" data-a="delset">삭제</button></div>
+        <div class="swipe-front ${s.done ? 'done' : ''}"><div class="swipe-cols">
+          <button class="stype ${s.type}" data-a="stype">${s.type === 'n' ? normalIndex(e.sets, si) : s.type}</button>
+          <div class="prev">${p ? `<button type="button" class="prev-btn" data-a="useprev">${esc(p.w ? nfmt(toU(p.w, e.name)) + ' × ' + nfmt(p.r) : nfmt(p.r) + '렙')}</button>` : '—'}</div>
+          <input inputmode="decimal" data-f="w" value="${s.w === '' ? '' : nfmt(toU(s.w, e.name))}" placeholder="${ph && ph.w ? nfmt(toU(ph.w, e.name)) : ''}">
+          <input inputmode="numeric" data-f="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}">
+          <button class="check" data-a="check">${ICON.check}</button>
+        </div></div></div>
+        <div class="rest-row ${s.done ? 'past' : ''}" data-rei="${ei}" data-rsi="${si}"><div class="rest-line"><i></i><button class="rest-time" data-a="restedit">${fmtClock(setRest(e, s))}</button></div></div>`;
+      }).join('')}
       <button class="btn gray" style="padding:8px;font-size:15px;margin-top:4px" data-a="addset" data-ei="${ei}">＋ 세트 추가</button></div>`;
     }).join('')}
     <div style="height:18px"></div><button class="btn light" data-a="addex">운동 추가</button>
@@ -611,7 +716,7 @@ function activeInput(e) {
   const A = S.active;
   if (e.target.classList.contains('aw-name')) { A.name = e.target.value; save('active'); return; }
   if (e.target.classList.contains('aw-note')) { A.note = e.target.value; save('active'); return; }
-  const tr = e.target.closest('tr[data-ei]'); if (!tr) return;
+  const tr = e.target.closest('[data-ei][data-si]'); if (!tr) return;
   const ex = A.exercises[+tr.dataset.ei], s = ex.sets[+tr.dataset.si];
   const raw = e.target.value.replace(',', '.');
   const val = raw === '' ? '' : parseFloat(raw);
@@ -622,8 +727,8 @@ function activeInput(e) {
 function activeClick(e) {
   const b = e.target.closest('[data-a]'); if (!b) return;
   const A = S.active; const a = b.dataset.a;
-  const tr = b.closest('tr[data-ei]');
-  const rr = b.closest('tr[data-rei]');
+  const tr = b.closest('[data-ei][data-si]');
+  const rr = b.closest('[data-rei][data-rsi]');
   const ex = tr ? A.exercises[+tr.dataset.ei] : rr ? A.exercises[+rr.dataset.rei] : (b.dataset.ei != null ? A.exercises[+b.dataset.ei] : null);
   const si = tr ? +tr.dataset.si : rr ? +rr.dataset.rsi : -1;
   if (a === 'restedit') { editRestInline(b, +rr.dataset.rei, si); return; }
@@ -641,7 +746,7 @@ function activeClick(e) {
     save('active'); drawActive(); return;
   }
   if (a === 'stype') { const order = ['n', 'W', 'D', 'F']; const s = ex.sets[si]; s.type = order[(order.indexOf(s.type) + 1) % 4]; save('active'); drawActive(); return; }
-  if (a === 'delset') { ex.sets.splice(si, 1); save('active'); drawActive(); return; }
+  if (a === 'delset') { deleteSet(tr ? +tr.dataset.ei : +b.closest('.swipe-row').dataset.ei, si); return; }
   if (a === 'addset') { const last = ex.sets[ex.sets.length - 1]; ex.sets.push({ w: '', r: '', type: 'n', done: false, pw: last ? (last.w === '' ? last.pw : last.w) : 0, pr: last ? (last.r === '' ? last.pr : last.r) : 0 }); save('active'); drawActive(); return; }
   if (a === 'addex') { pickExercise(names => { for (const n of names) { const lp = lastPerformance(n); const sets = lp ? lp.ex.sets.map(s => ({ w: '', r: '', type: s.type, done: false })) : [{ w: '', r: '', type: 'n', done: false }]; A.exercises.push({ name: n, sets, rest: lastRestOf(n) || undefined }); } save('active'); drawActive(); }); return; }
   if (a === 'exinfo') { exDetail(ex.name, true); return; }
@@ -676,7 +781,7 @@ function activeClick(e) {
     if (!p) return;
     s.w = p.w || 0; s.r = p.r || 0; // confirm gray placeholders as real values; do not auto-check
     save('active');
-    const row = b.closest('tr');
+    const row = b.closest('.swipe-front, [data-ei][data-si]');
     const iw = row && row.querySelector('[data-f=w]'), ir = row && row.querySelector('[data-f=r]');
     if (iw) iw.value = nfmt(toU(s.w, ex.name));
     if (ir) ir.value = nfmt(s.r);
@@ -728,11 +833,11 @@ function applyRest(ei, si, t, all) {
   if (restTimer && restTimer.ei === ei && restTimer.si === si) { restTimer.end = Date.now() + t * 1000; restTimer.total = t; }
   if (!all) toastAction(`휴식 ${fmtClock(t)} · 이 세트와 이후 세트, 다음 워크아웃에 적용`, '모든 세트', () => { applyRest(ei, si, t, true); drawActive(); toast('모든 세트에 적용됨'); });
 }
-function toastAction(msg, label, fn) {
+function toastAction(msg, label, fn, ms = 4500) {
   const t = $('#toast'); t.innerHTML = ''; t.append(document.createTextNode(msg + ' '));
   const b = document.createElement('button'); b.textContent = label; b.style.cssText = 'color:#7CC4FF;font-weight:700;margin-left:6px;pointer-events:auto';
   b.addEventListener('click', ev => { ev.stopPropagation(); t.hidden = true; fn(); }); t.append(b);
-  t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, 4500);
+  t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms);
 }
 function startRest(sec) {
   sec = sec > 0 ? sec : DEFAULT_REST;
@@ -748,10 +853,10 @@ function beep() {
 }
 function drawTimer() {
   const tb = $('#timerBar'); if (!tb) return;
-  $$('#activeSheet tr.rest-row.running').forEach(r => { if (!restTimer || +r.dataset.rei !== restTimer.ei || +r.dataset.rsi !== restTimer.si) { r.classList.remove('running'); const i = r.querySelector('i'); if (i) i.style.width = '0'; const bt = r.querySelector('.rest-time'); const A = S.active; if (bt && A && A.exercises[+r.dataset.rei]) { const ex = A.exercises[+r.dataset.rei]; bt.textContent = fmtClock(setRest(ex, ex.sets[+r.dataset.rsi])); } } });
+  $$('#activeSheet .rest-row.running').forEach(r => { if (!restTimer || +r.dataset.rei !== restTimer.ei || +r.dataset.rsi !== restTimer.si) { r.classList.remove('running'); const i = r.querySelector('i'); if (i) i.style.width = '0'; const bt = r.querySelector('.rest-time'); const A = S.active; if (bt && A && A.exercises[+r.dataset.rei]) { const ex = A.exercises[+r.dataset.rei]; bt.textContent = fmtClock(setRest(ex, ex.sets[+r.dataset.rsi])); } } });
   if (!restTimer) { tb.hidden = true; tb.innerHTML = ''; return; }
   {
-    const r = $(`#activeSheet tr.rest-row[data-rei="${restTimer.ei}"][data-rsi="${restTimer.si}"]`);
+    const r = $(`#activeSheet .rest-row[data-rei="${restTimer.ei}"][data-rsi="${restTimer.si}"]`);
     if (r) { const lf = Math.max(0, (restTimer.end - Date.now()) / 1000); r.classList.add('running'); r.querySelector('i').style.width = Math.max(0, Math.min(100, lf / restTimer.total * 100)) + '%'; const bt = r.querySelector('.rest-time'); if (bt) bt.textContent = fmtClock(Math.ceil(lf)); }
   }
   tb.hidden = false;
@@ -1014,14 +1119,16 @@ function editWorkout(id) {
    <div class="field"><label>노트</label><textarea class="weno" rows="2">${esc(c.note || '')}</textarea></div>
    <div class="we-list"></div>`, { bottom: true });
   const draw = () => {
-    $('.we-list', m).innerHTML = c.exercises.map((e, ei) => `<div style="margin-top:12px"><div class="between"><b>${esc(e.name)}</b><button class="del" data-wx="${ei}">✕</button></div>
-     ${e.sets.map((s, si) => `<div class="row" style="margin:4px 0"><span class="muted small" style="width:20px">${s.type !== 'n' ? s.type : si + 1}</span><input data-ei="${ei}" data-si="${si}" data-f="w" inputmode="decimal" value="${nfmt(toU(s.w, e.name))}" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center"> ${unitOf(e.name)} × <input data-ei="${ei}" data-si="${si}" data-f="r" inputmode="numeric" value="${nfmt(s.r)}" style="width:60px;border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center"><button class="del" data-ws="${ei}:${si}">−</button></div>`).join('')}</div>`).join('');
+    $('.we-list', m).innerHTML = c.exercises.map((e, ei) => `<div style="margin-top:12px"><div class="between"><b>${esc(e.name)}</b><button class="del" data-wx="${ei}">삭제</button></div>
+     ${e.sets.map((s, si) => `<div class="swipe-row we-swipe" data-ws="${ei}:${si}"><div class="swipe-actions"><button type="button" class="swipe-del" data-ws="${ei}:${si}">삭제</button></div>
+      <div class="swipe-front"><div class="row" style="margin:0;padding:4px 0;gap:6px"><span class="muted small" style="width:20px">${s.type !== 'n' ? s.type : si + 1}</span><input data-ei="${ei}" data-si="${si}" data-f="w" inputmode="decimal" value="${nfmt(toU(s.w, e.name))}" style="width:80px;border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center"> ${unitOf(e.name)} × <input data-ei="${ei}" data-si="${si}" data-f="r" inputmode="numeric" value="${nfmt(s.r)}" style="width:60px;border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center"></div></div></div>`).join('')}</div>`).join('');
+    bindSetSwipe(m);
   };
   draw();
   m.addEventListener('input', e => { const i = e.target; if (i.dataset.f) { const ex = c.exercises[+i.dataset.ei], s = ex.sets[+i.dataset.si]; const v = parseFloat(i.value.replace(',', '.')) || 0; if (i.dataset.f === 'w') s.w = fromU(v, ex.name); else s.r = v; } });
   m.addEventListener('click', e => {
     const x = e.target.closest('[data-wx]'); if (x) { c.exercises.splice(+x.dataset.wx, 1); draw(); }
-    const y = e.target.closest('[data-ws]'); if (y) { const [ei, si] = y.dataset.ws.split(':').map(Number); c.exercises[ei].sets.splice(si, 1); if (!c.exercises[ei].sets.length) c.exercises.splice(ei, 1); draw(); }
+    const y = e.target.closest('.swipe-del[data-ws], [data-ws].swipe-del'); if (y) { const [ei, si] = y.dataset.ws.split(':').map(Number); c.exercises[ei].sets.splice(si, 1); if (!c.exercises[ei].sets.length) c.exercises.splice(ei, 1); draw(); }
     if (e.target.closest('.wes')) {
       c.name = $('.wen', m).value.trim() || c.name; const dv = $('.wed', m).value; if (dv) c.start = dv.length === 16 ? dv + ':00' : dv;
       c.duration = (parseInt($('.wem', m).value) || 0) * 60; c.note = $('.weno', m).value;
@@ -1097,16 +1204,66 @@ document.addEventListener('click', e => {
   }
 });
 
+function bindBannerOpen(ban) {
+  let drag = null, suppressClick = false;
+  const pt = e => e.touches ? e.touches[0] : e;
+  const ensureSheet = (fromY) => {
+    if ($('#activeSheet')) return $('#activeSheet');
+    openActive({ animate: false });
+    const el = $('#activeSheet');
+    if (el) { el.style.transition = 'none'; el.style.transform = `translateY(${fromY}px)`; el.style.opacity = String(Math.max(0.35, 1 - fromY / (window.innerHeight * 0.9))); }
+    return el;
+  };
+  ban.addEventListener('click', e => {
+    if (suppressClick) return;
+    openActive({ animate: true });
+  });
+  ban.addEventListener('touchstart', e => {
+    if (!S.active || $('#activeSheet') || e.touches.length > 1) return;
+    const t = pt(e);
+    drag = { y0: t.clientY, dy: 0, t0: Date.now(), moved: false, el: null };
+  }, { passive: true });
+  ban.addEventListener('touchmove', e => {
+    if (!drag) return;
+    const t = pt(e), up = drag.y0 - t.clientY;
+    if (!drag.moved && up > 8) {
+      drag.moved = true;
+      const H = window.innerHeight;
+      drag.el = ensureSheet(H - Math.min(up, H));
+    }
+    if (!drag.moved || !drag.el) return;
+    if (e.cancelable) e.preventDefault();
+    const H = window.innerHeight;
+    drag.dy = Math.max(0, H - Math.min(Math.max(0, up), H));
+    drag.el.style.transition = 'none';
+    drag.el.style.transform = `translateY(${drag.dy}px)`;
+    drag.el.style.opacity = String(Math.max(0.35, 1 - drag.dy / (H * 0.9)));
+  }, { passive: false });
+  const end = () => {
+    if (!drag) return;
+    const { moved, el, dy, t0, y0 } = drag; drag = null;
+    if (moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 80); }
+    if (!moved || !el) return;
+    const H = window.innerHeight, travel = H - dy, dt = Math.max(1, Date.now() - t0), vel = travel / dt;
+    const open = travel > H * 0.25 || (travel > 80 && vel > 0.55);
+    el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s cubic-bezier(.2,.85,.25,1)';
+    if (open) { el.style.transform = ''; el.style.opacity = ''; updateBanner(); }
+    else {
+      el.style.transform = `translateY(${H}px)`; el.style.opacity = '0';
+      const gone = () => { el.removeEventListener('transitionend', gone); closeActive(); };
+      el.addEventListener('transitionend', gone); setTimeout(gone, 320);
+    }
+  };
+  ban.addEventListener('touchend', end, { passive: true });
+  ban.addEventListener('touchcancel', end, { passive: true });
+}
+
 /* ================= boot ================= */
 (async function boot() {
   try { await loadAll(); } catch (e) { toast('저장소를 열 수 없어요: ' + e.message, 5000); }
   derive();
   go('profile');
-  const ban = $('#activeBanner');
-  ban.addEventListener('click', openActive);
-  let by = 0;
-  ban.addEventListener('touchstart', e => { by = e.touches[0].clientY; }, { passive: true });
-  ban.addEventListener('touchend', e => { if (by && by - e.changedTouches[0].clientY > 30) openActive(); by = 0; }, { passive: true });
+  bindBannerOpen($('#activeBanner'));
   setInterval(tick, 500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); if (S.sdsync.token && Date.now() - (S.sdsync.tried || 0) > 60000) sdSync(false); } });
   window.addEventListener('online', () => { if (S.sdsync.token) sdSync(false); });
