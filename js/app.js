@@ -507,7 +507,7 @@ function drawActive() {
   const scroll = el.querySelector('.fbody') ? el.querySelector('.fbody').scrollTop : 0;
   el.innerHTML = `<div class="fhead"><button class="pill gray" data-a="min">⌄ 최소화</button><div class="bold" id="awClock" style="font-variant-numeric:tabular-nums">${fmtClock((Date.now() - A.startTs) / 1000)}</div><button class="pill" style="background:var(--green);color:#fff" data-a="finish">완료</button></div>
   <div class="fbody">
-    <input class="aw-name" value="${esc(A.name)}" style="font-size:24px;font-weight:800;border:0;outline:none;width:100%;padding:6px 0">
+    <div class="aw-title-row"><input class="aw-name" value="${esc(A.name)}" style="font-size:24px;font-weight:800;border:0;outline:none;padding:6px 0"><div class="rest-quick">${[[30,'30초'],[60,'1분'],[90,'1:30'],[120,'2분'],[150,'2:30'],[180,'3분']].map(([t,l]) => `<button type="button" data-a="rest-now" data-rn="${t}">${l}</button>`).join('')}</div></div>
     <textarea class="aw-note" placeholder="워크아웃 노트" rows="1" style="width:100%;border:0;outline:none;resize:none;color:var(--sub);font-size:15px">${esc(A.note || '')}</textarea>
     ${A.exercises.length ? '' : '<div class="empty small">아래 “운동 추가”를 눌러 시작하세요</div>'}
     ${A.exercises.map((e, ei) => {
@@ -530,7 +530,7 @@ function drawActive() {
     <div style="height:10px"></div><button class="btn red" data-a="cancel">워크아웃 취소</button>
     <div style="height:20px"></div>
   </div>
-  <div class="timer-bar" id="timerBar"></div>`;
+  <div class="timer-bar" id="timerBar" hidden></div>`;
   el.querySelector('.fbody').scrollTop = scroll;
   drawTimer();
 }
@@ -599,7 +599,7 @@ function activeClick(e) {
   }
   if (a === 'cancel') { if (confirm('워크아웃을 취소할까요? 기록이 저장되지 않아요.')) { S.active = null; restTimer = null; save('active', true); closeActive(); render(); } return; }
   if (a === 'finish') { finishWorkout(); return; }
-  if (a === 'rest-now') { pickRestNow(); return; }
+  if (a === 'rest-now') { startRest(+b.dataset.rn || 60); drawTimer(); updateBanner(); toast(`휴식 ${fmtClock(+b.dataset.rn || 60)}`); return; }
   if (a === 'rt-minus') { if (restTimer) { restTimer.end -= 15000; restTimer.total = Math.max(1, restTimer.total - 15); } drawTimer(); return; }
   if (a === 'rt-plus') { if (restTimer) { restTimer.end += 15000; restTimer.total += 15; } drawTimer(); return; }
   if (a === 'rt-skip') { restTimer = null; drawTimer(); updateBanner(); return; }
@@ -610,18 +610,6 @@ function lastRestOf(name) { const h = D.exHist[name] || []; for (let i = h.lengt
 function savedRest(name) { const m = S.settings.exRest || {}; return m[name] > 0 ? m[name] : 0; }
 function restFor(ex) { return (ex.rest > 0 ? ex.rest : 0) || savedRest(ex.name) || lastRestOf(ex.name) || (S.settings.rest > 0 ? S.settings.rest : DEFAULT_REST); }
 // picker: 0:30 – 5:00 in 15s steps
-function pickRestNow() {
-  const opts = [[30, '30초'], [60, '1분'], [90, '1분 30초'], [120, '2분'], [150, '2분 30초'], [180, '3분']];
-  const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2 style="font-size:16px">휴식</h2><span style="width:34px"></span></div>
-    <div class="rest-now-grid">${opts.map(([t, lab]) => `<button data-rn="${t}">${lab}</button>`).join('')}</div>`, { bottom: true, nested: true });
-  m.addEventListener('click', e => {
-    const b = e.target.closest('[data-rn]'); if (!b) return;
-    closeTopModal();
-    startRest(+b.dataset.rn); // ad-hoc: do not touch ex.rest / settings.exRest / set.rest
-    drawTimer(); updateBanner();
-    toast(`휴식 ${fmtClock(+b.dataset.rn)}`);
-  });
-}
 function pickRest(title, cur, cb, note) {
   const opts = []; for (let t = 30; t <= 300; t += 15) opts.push(t);
   const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2 style="font-size:16px">${esc(title)}</h2><span style="width:34px"></span></div>
@@ -677,11 +665,7 @@ function beep() {
 function drawTimer() {
   const tb = $('#timerBar'); if (!tb) return;
   $$('#activeSheet tr.rest-row.running').forEach(r => { if (!restTimer || +r.dataset.rei !== restTimer.ei || +r.dataset.rsi !== restTimer.si) { r.classList.remove('running'); const i = r.querySelector('i'); if (i) i.style.width = '0'; const bt = r.querySelector('.rest-time'); const A = S.active; if (bt && A && A.exercises[+r.dataset.rei]) { const ex = A.exercises[+r.dataset.rei]; bt.textContent = fmtClock(setRest(ex, ex.sets[+r.dataset.rsi])); } } });
-  if (!restTimer) {
-    tb.hidden = false;
-    tb.innerHTML = `<button class="rest-now" data-a="rest-now">⏱ 휴식</button>`;
-    return;
-  }
+  if (!restTimer) { tb.hidden = true; tb.innerHTML = ''; return; }
   {
     const r = $(`#activeSheet tr.rest-row[data-rei="${restTimer.ei}"][data-rsi="${restTimer.si}"]`);
     if (r) { const lf = Math.max(0, (restTimer.end - Date.now()) / 1000); r.classList.add('running'); r.querySelector('i').style.width = Math.max(0, Math.min(100, lf / restTimer.total * 100)) + '%'; const bt = r.querySelector('.rest-time'); if (bt) bt.textContent = fmtClock(Math.ceil(lf)); }
