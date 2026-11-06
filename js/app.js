@@ -591,7 +591,7 @@ function drawActive() {
         const p = lp && lp.ex.sets[si];
         const ph = p ? p : (s.pw || s.pr ? { w: s.pw, r: s.pr } : null);
         return `<tr class="${s.done ? 'done' : ''}" data-ei="${ei}" data-si="${si}"><td><button class="stype ${s.type}" data-a="stype">${s.type === 'n' ? normalIndex(e.sets, si) : s.type}</button></td>
-        <td class="prev">${p ? esc(p.w ? nfmt(toU(p.w, e.name)) + ' × ' + nfmt(p.r) : nfmt(p.r) + '렙') : '—'}</td>
+        <td class="prev">${p ? `<button type="button" class="prev-btn" data-a="useprev">${esc(p.w ? nfmt(toU(p.w, e.name)) + ' × ' + nfmt(p.r) : nfmt(p.r) + '렙')}</button>` : '—'}</td>
         <td><input inputmode="decimal" data-f="w" value="${s.w === '' ? '' : nfmt(toU(s.w, e.name))}" placeholder="${ph && ph.w ? nfmt(toU(ph.w, e.name)) : ''}"></td>
         <td><input inputmode="numeric" data-f="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}"></td>
         <td><button class="check" data-a="check">${ICON.check}</button></td><td><button class="del" data-a="delset">−</button></td></tr>
@@ -671,6 +671,18 @@ function activeClick(e) {
   }
   if (a === 'cancel') { if (confirm('워크아웃을 취소할까요? 기록이 저장되지 않아요.')) { S.active = null; restTimer = null; save('active', true); closeActive(); render(); } return; }
   if (a === 'finish') { finishWorkout(); return; }
+  if (a === 'useprev') {
+    const s = ex.sets[si]; const lp = lastPerformance(ex.name); const p = lp && lp.ex.sets[si];
+    if (!p) return;
+    s.w = p.w || 0; s.r = p.r || 0; // confirm gray placeholders as real values; do not auto-check
+    save('active');
+    const row = b.closest('tr');
+    const iw = row && row.querySelector('[data-f=w]'), ir = row && row.querySelector('[data-f=r]');
+    if (iw) iw.value = nfmt(toU(s.w, ex.name));
+    if (ir) ir.value = nfmt(s.r);
+    b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 220);
+    return;
+  }
   if (a === 'rest-now') { startRest(+b.dataset.rn || 60); drawTimer(); updateBanner(); toast(`휴식 ${fmtClock(+b.dataset.rn || 60)}`); return; }
   if (a === 'rt-minus') { if (restTimer) { restTimer.end -= 15000; restTimer.total = Math.max(1, restTimer.total - 15); } drawTimer(); return; }
   if (a === 'rt-plus') { if (restTimer) { restTimer.end += 15000; restTimer.total += 15; } drawTimer(); return; }

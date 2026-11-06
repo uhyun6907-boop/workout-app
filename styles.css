@@ -162,3 +162,5 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .full .fhead-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:28px}
 .full.dragging{touch-action:none}
 .full.dragging .fbody{-webkit-overflow-scrolling:auto}
+.sets .prev-btn{color:var(--muted);font-size:13px;font-weight:600;padding:6px 4px;border-radius:8px;min-height:32px;white-space:nowrap}
+.sets .prev-btn:active,.sets .prev-btn.flash{background:var(--blue-l);color:var(--blue)}
