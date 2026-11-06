@@ -78,6 +78,7 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>',
   search: '<svg viewBox="0 0 24 24" width="20" fill="#8E8E93"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>',
   person: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c.6-4.6 4-7 8.5-7s7.9 2.4 8.5 7z"/></svg>',
+  sparkle: '<svg viewBox="0 0 24 24"><path d="M12 2l1.2 6.3L19 9l-5.8 1.7L12 17l-1.2-6.3L5 9l5.8-1.7z"/><path d="M18 14l.6 2.4L21 17l-2.4.6L18 20l-.6-2.4L15 17l2.4-.6z" opacity=".85"/></svg>',
 };
 
 /* ================= derived data ================= */
@@ -287,6 +288,7 @@ function renderProfile(v) {
   <div class="topbar"><div class="l"><button class="icon-btn" data-act="settings">${ICON.gear}</button></div><div class="r"></div></div>
   <h1 class="big">프로필</h1>
   <div class="profile-head"><div class="avatar">${ICON.person}</div><div><div class="bold" style="font-size:20px">${esc(S.settings.name)}</div><div class="muted" style="font-size:17px;font-weight:600">${n.toLocaleString('ko-KR')} 워크아웃</div></div></div>
+  ${coachCardHtml()}
   ${big3Card()}
   <div class="section-h"><span>대시보드</span></div>
   <div class="card">
@@ -417,6 +419,211 @@ function workoutMenu(id) {
    <button class="menu-item danger" data-act="w-del" data-id="${id}">삭제</button>`, { bottom: true });
 }
 
+
+/* ================= on-device coaching (no network) ================= */
+const MAIN_LIFTS = [
+  { key: 'squat', re: /squat/i, label: '스쿼트' },
+  { key: 'bench', re: /bench\s*press/i, label: '벤치' },
+  { key: 'dead', re: /deadlift/i, label: '데드리프트' },
+  { key: 'ohp', re: /overhead\s*press|shoulder\s*press/i, label: '오버헤드 프레스' },
+];
+function roundRm(kg) { return Math.round(kg * 2) / 2; }
+function topWorkingSet(ex) {
+  let best = null, score = -1;
+  for (const s of (ex.sets || [])) {
+    if (s.type === 'W') continue;
+    const rm = e1rm(s.w, s.r);
+    const sc = rm || ((s.w || 0) * 1000 + (s.r || 0));
+    if (sc > score) { score = sc; best = s; }
+  }
+  return best || (ex.sets && ex.sets[0]) || null;
+}
+function exVolume(ex) {
+  let v = 0; for (const s of (ex.sets || [])) if (s.type !== 'W') v += (s.w || 0) * (s.r || 0); return v;
+}
+function priorSession(name, beforeDate, excludeId) {
+  const h = D.exHist[name]; if (!h) return null;
+  for (let i = h.length - 1; i >= 0; i--) {
+    const x = h[i];
+    if (excludeId && x.w.id === excludeId) continue;
+    if (+x.date < +beforeDate) return x;
+  }
+  return null;
+}
+function daysBetween(a, b) {
+  const x = new Date(a); x.setHours(0, 0, 0, 0);
+  const y = new Date(b); y.setHours(0, 0, 0, 0);
+  return Math.round((x - y) / 864e5);
+}
+function weeklyWorkoutDayAvg(weeksBack) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const from = new Date(now); from.setDate(from.getDate() - weeksBack * 7);
+  const days = new Set();
+  for (const w of S.workouts) {
+    const d = w._date || pd(w.start);
+    if (d >= from && d <= now) days.add(dayKey(d));
+  }
+  return days.size / weeksBack;
+}
+function pickCoachWorkout() {
+  const list = D.byStart; if (!list.length) return { kind: 'empty' };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yday = new Date(today); yday.setDate(yday.getDate() - 1);
+  const yKey = dayKey(yday);
+  const yHits = list.filter(w => dayKey(w._date || pd(w.start)) === yKey);
+  if (yHits.length) {
+    // if multiple yesterday, pick the one with most volume
+    const w = yHits.slice().sort((a, b) => (b._vol || 0) - (a._vol || 0))[0];
+    return { kind: 'yesterday', w, date: w._date || pd(w.start) };
+  }
+  const w = list[0];
+  const date = w._date || pd(w.start);
+  return { kind: 'recent', w, date, daysAgo: daysBetween(today, date) };
+}
+function buildCoachAdvice(ctx) {
+  if (ctx.kind === 'empty') {
+    return ['아직 저장된 워크아웃이 없어요. 첫 운동을 마치고 나면, 그 기록을 보고 다음에 뭘 하면 좋을지 여기 적어 둘게요.'];
+  }
+  const { w, date, kind, daysAgo } = ctx;
+  const tips = [];
+  const setN = w.exercises.reduce((n, e) => n + e.sets.filter(s => s.type !== 'W').length, 0);
+  const exN = w.exercises.length;
+  const durMin = Math.round((w.duration || 0) / 60);
+
+  // per-lift comparisons vs previous session of same exercise
+  const liftNotes = [];
+  let up = 0, down = 0, flat = 0, prs = 0;
+  for (const ex of w.exercises) {
+    const top = topWorkingSet(ex); if (!top || !(top.w > 0)) continue;
+    const curRm = roundRm(e1rm(top.w, top.r));
+    const curVol = exVolume(ex);
+    const prev = priorSession(ex.name, date, w.id);
+    const short = ex.name.replace(/\s*\(.*?\)\s*/g, '').trim();
+    if (ex._pr) prs++;
+    if (!prev) continue;
+    const pTop = topWorkingSet(prev.ex);
+    const pRm = pTop ? roundRm(e1rm(pTop.w, pTop.r)) : roundRm(prev.rm || 0);
+    const pVol = exVolume(prev.ex) || prev.vol || 0;
+    const u = unitOf(ex.name);
+    const curDisp = `${nfmt(toU(top.w, ex.name))}×${nfmt(top.r)}`;
+    const pDisp = pTop && pTop.w ? `${nfmt(toU(pTop.w, ex.name))}×${nfmt(pTop.r)}` : null;
+    if (ex._pr || (curRm && pRm && curRm > pRm + 0.05)) {
+      up++;
+      liftNotes.push(`${short} ${curDisp}${u === 'kg' ? '' : u}로 추정 1RM이 올라갔어요${pDisp ? ` (지난번 ${pDisp})` : ''}.`);
+    } else if (pRm && curRm && curRm < pRm - 0.05) {
+      down++;
+      const suggestW = Math.round(toU(top.w, ex.name) * 2) / 2;
+      const bump = nfmt(suggestW + (u === 'lb' ? 5 : 2.5));
+      liftNotes.push(`${short} ${curDisp}는 지난번보다 살짝 낮아요. 컨디션 회복 후 ${bump}×3 정도로 다시 밀어보세요.`);
+    } else if (pTop && top.w === pTop.w && top.r === pTop.r) {
+      flat++;
+      const nextW = nfmt((Math.round(toU(top.w, ex.name) * 2) / 2) + (unitOf(ex.name) === 'lb' ? 5 : 2.5));
+      liftNotes.push(`${short} ${curDisp}가 지난번과 같아요. 다음엔 ${nextW}×3으로 올려보세요.`);
+    } else if (curVol > pVol * 1.08) {
+      up++;
+      liftNotes.push(`${short} 볼륨이 지난번보다 늘었어요. 좋은 흐름이에요.`);
+    } else if (pVol && curVol < pVol * 0.9) {
+      down++;
+      liftNotes.push(`${short} 볼륨이 지난번보다 줄었어요. 의도한 딜로드면 괜찮고, 아니라면 세트 하나만 더 해봐요.`);
+    }
+  }
+  // pick up to 2 most specific lift notes
+  for (const n of liftNotes.slice(0, 2)) tips.push(n);
+
+  if (prs && !tips.some(t => t.includes('1RM') || t.includes('올려'))) {
+    tips.push(`이번 세션에서 신기록 움직임이 ${prs}개 있었어요. 그 자극을 다음 주에 이어가 봐요.`);
+  }
+
+  // short / light session
+  if (exN <= 2 || setN <= 4 || (durMin > 0 && durMin < 25)) {
+    tips.push('세션이 짧게 끝났어요. 회복 날이면 충분하고, 본 운동 루틴이라면 다음엔 보조 운동 1–2개만 더해도 좋아요.');
+  }
+
+  // frequency
+  if (kind === 'recent' && daysAgo >= 2) {
+    if (daysAgo >= 5) tips.push(`마지막 운동 후 ${daysAgo}일이 지났어요. 짧게라도 메인 리프트 하나부터 다시 열어봐요.`);
+    else tips.push(`어제는 쉬는 날이었고, 마지막 운동은 ${daysAgo}일 전이에요. 컨디션 괜찮으면 오늘 가볍게 열어봐도 좋아요.`);
+  } else if (kind === 'yesterday') {
+    const avg4 = weeklyWorkoutDayAvg(4);
+    // only comment on frequency when there is a meaningful sample
+    const days4 = Math.round(avg4 * 4);
+    if (days4 >= 3 && avg4 < 2.8) tips.push(`최근 4주 평균 주 ${nfmt(Math.round(avg4 * 10) / 10)}일 운동 중이에요. 루틴이 비면 주 3–4일을 목표로 잡아보세요.`);
+    else if (days4 >= 12) tips.push(`최근 4주 주 ${nfmt(Math.round(avg4 * 10) / 10)}일 꼴로 잘 나오고 있어요. 회복만 챙기면 이 페이스 유지해 봐요.`);
+  }
+
+  // neglected main lifts
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (const m of MAIN_LIFTS) {
+    let latest = null;
+    for (const name of Object.keys(D.exHist || {})) {
+      if (!m.re.test(name)) continue;
+      const h = D.exHist[name]; if (!h || !h.length) continue;
+      const d = h[h.length - 1].date;
+      if (!latest || d > latest) latest = d;
+    }
+    if (!latest) continue;
+    const gap = daysBetween(today, latest);
+    if (gap > 10) {
+      tips.push(`${m.label}를 ${gap}일째 안 했어요. 다음 세션에 워밍업 세트만이라도 넣어보세요.`);
+      break;
+    }
+  }
+
+  // bodyweight + stalled lifts (once)
+  if (down >= 1 && !up) {
+    try {
+      const { daily } = bwSeries();
+      if (daily.length >= 2) {
+        const a = daily[daily.length - 1], b = daily[Math.max(0, daily.length - 8)];
+        const dKg = a.kg - b.kg;
+        if (Math.abs(dKg) >= 1.0) {
+          const dir = dKg < 0 ? '줄었고' : '늘었고';
+          tips.push(`최근 체중이 ${nfmt(Math.abs(toU(dKg)))}${S.settings.unit} ${dir} 메인 리프트도 한동안 비슷한 구간이에요. 식사와 수면만 한번 점검해 봐요.`);
+        }
+      }
+    } catch (e) {}
+  }
+
+  // fallback warmth
+  if (!tips.length) {
+    if (kind === 'yesterday') tips.push('어제 세션 잘 마무리했어요. 오늘은 같은 자극을 조금 더하거나, 약한 부위 보조 운동을 하나 넣어보세요.');
+    else tips.push('최근 기록 잘 쌓고 있어요. 다음 세션에선 가장 잘 오른 리프트를 조금 더 밀어보세요.');
+  }
+  return tips.slice(0, 4);
+}
+function coachCardHtml() {
+  const ctx = pickCoachWorkout();
+  if (ctx.kind === 'empty') {
+    return `<div class="coach-card" id="coachCard"><div class="ch"><h3>오늘의 조언</h3></div>
+      <div class="cempty">첫 워크아웃을 저장하면, 그 결과를 보고 다음에 도움 될 조언을 여기에 적어 둘게요.</div></div>`;
+  }
+  const { w, date, kind, daysAgo } = ctx;
+  const title = kind === 'yesterday' ? '어제 운동' : '가장 최근 운동';
+  const restLine = kind === 'yesterday' ? '' :
+    (daysAgo === 1 ? '어제는 쉬는 날이었어요.' :
+      daysAgo > 1 ? `마지막 운동 후 ${daysAgo}일째예요.` : '');
+  const setN = w.exercises.reduce((n, e) => n + e.sets.length, 0);
+  const lifts = w.exercises.slice(0, 6).map(ex => {
+    const top = topWorkingSet(ex);
+    const pr = ex._pr ? '<span class="pr">신기록</span>' : '';
+    return `<li><span class="en">${esc(ex.name)}${pr}</span><span class="es">${top ? esc(setLabel(top, ex.name)) : '—'}</span></li>`;
+  }).join('');
+  const tips = buildCoachAdvice(ctx);
+  const adv = tips.map(t => esc(t)).join(' ');
+  return `<div class="coach-card" id="coachCard">
+    <div class="ch"><h3>${title}</h3><span class="d">${esc(fmtDateK(date, date.getFullYear() !== new Date().getFullYear()))}</span></div>
+    ${restLine ? `<div class="crest">${esc(restLine)}</div>` : ''}
+    <div class="cname">${esc(w.name || '워크아웃')}</div>
+    <div class="cmeta">
+      <span>${ICON.clock}${esc(fmtDur(w.duration || 0))}</span>
+      <span>${ICON.weight}${esc(fmtVol(w._vol || 0))}</span>
+      <span>${w.exercises.length}운동 · ${setN}세트${w._prs ? ` · 🏆${w._prs}` : ''}</span>
+    </div>
+    ${lifts ? `<ul class="clifts">${lifts}</ul>` : ''}
+    <div class="cadv"><div class="al">${ICON.sparkle}오늘의 조언</div><p>${adv}</p></div>
+  </div>`;
+}
+
 /* ================= start / templates ================= */
 function tplLast(t) {
   let last = t.lastUsed ? pd(t.lastUsed) : null;
@@ -427,6 +634,7 @@ function renderStart(v) {
   const tpls = S.templates;
   v.innerHTML = `<div class="topbar"><div class="l"></div><div class="r"></div></div>
   <h1 class="big">워크아웃 시작</h1>
+  ${coachCardHtml()}
   <div class="bold" style="margin-bottom:8px">빠른 시작</div>
   <button class="btn" data-act="start-empty">비어 있는 워크아웃 시작</button>
   <div class="section-h" style="font-size:26px;font-weight:800"><span>템플릿</span><span class="row"><button class="pill" data-act="tpl-new">＋ 템플릿</button><button class="dots" data-act="tpl-menu">•••</button></span></div>
@@ -1566,7 +1774,7 @@ function bindBannerOpen(ban) {
     const msg = up === 'manual' ? `최신 버전으로 새로고침됨 (v${V})` : (lastV && V > lastV) || (!lastV && S.workouts.length) || (up && up !== 'manual') ? `새 버전으로 업데이트됨 (v${V})` : '';
     if (msg) setTimeout(() => toast(msg, 3500), 400);
   } catch (e) {}
-  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive };
+  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, coachCardHtml, pickCoachWorkout, buildCoachAdvice };
 })();
 
 /* ================= 심플다이어트 ================= */

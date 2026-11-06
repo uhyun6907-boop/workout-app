@@ -233,3 +233,25 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .full.pad-open .fbody{padding-bottom:calc(300px + var(--sab))!important}
 .swipe-cols .check{position:relative}
 .rpe-dot{position:absolute;bottom:-2px;right:-2px;font-size:8px;font-weight:800;background:var(--blue);color:#fff;border-radius:6px;padding:0 3px;line-height:12px;min-width:12px}
+
+/* —— on-device coaching card —— */
+.coach-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px 16px;margin:0 0 16px;text-align:left}
+.coach-card .ch{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px}
+.coach-card .ch h3{margin:0;font-size:17px;font-weight:800}
+.coach-card .ch .d{color:var(--sub);font-size:13px;font-weight:600;white-space:nowrap}
+.coach-card .crest{color:var(--sub);font-size:13px;margin:0 0 10px;font-weight:600}
+.coach-card .cmeta{display:flex;flex-wrap:wrap;gap:8px 12px;margin:0 0 10px;font-size:13px;font-weight:700;color:#333}
+.coach-card .cmeta span{display:inline-flex;align-items:center;gap:4px}
+.coach-card .cmeta svg{width:14px;height:14px;fill:currentColor;opacity:.7}
+.coach-card .cname{font-size:15px;font-weight:800;margin:0 0 6px}
+.coach-card .clifts{margin:0;padding:0;list-style:none}
+.coach-card .clifts li{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--line);font-size:14px}
+.coach-card .clifts li:first-child{border-top:0;padding-top:0}
+.coach-card .clifts .en{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coach-card .clifts .es{font-weight:700;color:#222;white-space:nowrap}
+.coach-card .clifts .pr{color:#E6A700;font-weight:800;font-size:11px;margin-left:4px}
+.coach-card .cadv{margin-top:12px;padding:12px 12px 12px 14px;background:linear-gradient(180deg,#F3F8FF,#F7F7FA);border-radius:12px;border-left:3px solid var(--blue)}
+.coach-card .cadv .al{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--blue);margin-bottom:6px;letter-spacing:-.2px}
+.coach-card .cadv .al svg{width:14px;height:14px;fill:var(--blue)}
+.coach-card .cadv p{margin:0;font-size:14px;line-height:1.55;color:#222;font-weight:600}
+.coach-card .cempty{color:var(--sub);font-size:14px;line-height:1.5;font-weight:600;padding:4px 0}
