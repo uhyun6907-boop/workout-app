@@ -498,14 +498,87 @@ function openActive() {
   drawActive();
   el.addEventListener('click', activeClick);
   el.addEventListener('input', activeInput);
+  bindSheetDrag(el);
   updateBanner();
+}
+// Swipe-down to minimize (iOS sheet style). Starts from handle/header, or from body only when scrolled to top.
+function bindSheetDrag(el) {
+  let drag = null;
+  const pt = e => e.touches ? e.touches[0] : e;
+  const canStart = (target) => {
+    if (!target || target.closest('input, textarea, select, button, a, .rest-quick, label')) return false;
+    if (target.closest('.fhead, .sheet-handle')) return 'head';
+    const body = el.querySelector('.fbody');
+    if (body && body.contains(target) && body.scrollTop <= 1) return 'body';
+    return false;
+  };
+  const start = e => {
+    if (drag || (e.touches && e.touches.length > 1)) return;
+    const kind = canStart(e.target); if (!kind) return;
+    const t = pt(e);
+    drag = { y0: t.clientY, x0: t.clientX, dy: 0, t0: Date.now(), mode: kind === 'head' ? 'armed' : 'pending', pointerId: e.pointerId };
+    if (e.pointerId != null && el.setPointerCapture) try { el.setPointerCapture(e.pointerId); } catch (err) {}
+  };
+  const move = e => {
+    if (!drag) return;
+    if (e.touches && e.touches.length > 1) { cancel(); return; }
+    const t = pt(e), dy = t.clientY - drag.y0, dx = t.clientX - drag.x0;
+    if (drag.mode === 'pending' || drag.mode === 'armed') {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 2) { cancel(); return; } // horizontal: leave chips alone
+      if (dy < -10) { cancel(); return; } // upward: normal scroll / ignore
+      if (dy > 8) {
+        drag.mode = 'drag';
+        const body = el.querySelector('.fbody'); if (body) body.style.overflow = 'hidden';
+        el.classList.add('dragging');
+        el.style.transition = 'none';
+      } else return;
+    }
+    if (drag.mode !== 'drag') return;
+    if (e.cancelable) e.preventDefault();
+    drag.dy = Math.max(0, dy);
+    el.style.transform = `translateY(${drag.dy}px)`;
+    el.style.opacity = String(Math.max(0.35, 1 - drag.dy / (window.innerHeight * 0.9)));
+  };
+  const finish = () => {
+    if (!drag) return;
+    const dy = drag.dy, dt = Math.max(1, Date.now() - drag.t0), vel = dy / dt; // px/ms
+    const H = window.innerHeight;
+    const dismiss = dy > H * 0.25 || (dy > 80 && vel > 0.55);
+    const body = el.querySelector('.fbody'); if (body) body.style.overflow = '';
+    el.classList.remove('dragging');
+    if (dismiss) {
+      el.style.transition = 'transform .22s ease-out, opacity .2s ease-out';
+      el.style.transform = `translateY(${H}px)`; el.style.opacity = '0';
+      const gone = () => { el.removeEventListener('transitionend', gone); closeActive(); render(); };
+      el.addEventListener('transitionend', gone); setTimeout(gone, 280);
+    } else {
+      el.style.transition = 'transform .28s cubic-bezier(.2,.85,.25,1), opacity .28s';
+      el.style.transform = ''; el.style.opacity = '';
+    }
+    drag = null;
+  };
+  const cancel = () => {
+    if (!drag) return;
+    const body = el.querySelector('.fbody'); if (body) body.style.overflow = '';
+    el.classList.remove('dragging');
+    if (drag.mode === 'drag') { el.style.transition = 'transform .22s ease, opacity .22s'; el.style.transform = ''; el.style.opacity = ''; }
+    drag = null;
+  };
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchmove', move, { passive: false });
+  el.addEventListener('touchend', finish, { passive: true });
+  el.addEventListener('touchcancel', cancel, { passive: true });
+  el.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') return; start(e); });
+  el.addEventListener('pointermove', e => { if (e.pointerType === 'touch') return; move(e); });
+  el.addEventListener('pointerup', e => { if (e.pointerType === 'touch') return; finish(); });
+  el.addEventListener('pointercancel', e => { if (e.pointerType === 'touch') return; cancel(); });
 }
 function closeActive() { const el = $('#activeSheet'); if (el) el.remove(); updateBanner(); }
 function normalIndex(sets, si) { let n = 0; for (let i = 0; i <= si; i++) if (sets[i].type !== 'W') n++; return n; }
 function drawActive() {
   const el = $('#activeSheet'); if (!el) return; const A = S.active;
   const scroll = el.querySelector('.fbody') ? el.querySelector('.fbody').scrollTop : 0;
-  el.innerHTML = `<div class="fhead"><button class="pill gray" data-a="min">⌄ 최소화</button><div class="bold" id="awClock" style="font-variant-numeric:tabular-nums">${fmtClock((Date.now() - A.startTs) / 1000)}</div><button class="pill" style="background:var(--green);color:#fff" data-a="finish">완료</button></div>
+  el.innerHTML = `<div class="fhead"><div class="sheet-handle" aria-hidden="true"><i></i></div><div class="fhead-row"><div class="bold" id="awClock" style="font-variant-numeric:tabular-nums">${fmtClock((Date.now() - A.startTs) / 1000)}</div><button class="pill" style="background:var(--green);color:#fff" data-a="finish">완료</button></div></div>
   <div class="fbody">
     <div class="aw-title-row"><input class="aw-name" value="${esc(A.name)}" style="font-size:24px;font-weight:800;border:0;outline:none;padding:6px 0"><div class="rest-quick">${[[30,'30초'],[60,'1분'],[90,'1:30'],[120,'2분'],[150,'2:30'],[180,'3분']].map(([t,l]) => `<button type="button" data-a="rest-now" data-rn="${t}">${l}</button>`).join('')}</div></div>
     <textarea class="aw-note" placeholder="워크아웃 노트" rows="1" style="width:100%;border:0;outline:none;resize:none;color:var(--sub);font-size:15px">${esc(A.note || '')}</textarea>
@@ -554,7 +627,6 @@ function activeClick(e) {
   const ex = tr ? A.exercises[+tr.dataset.ei] : rr ? A.exercises[+rr.dataset.rei] : (b.dataset.ei != null ? A.exercises[+b.dataset.ei] : null);
   const si = tr ? +tr.dataset.si : rr ? +rr.dataset.rsi : -1;
   if (a === 'restedit') { editRestInline(b, +rr.dataset.rei, si); return; }
-  if (a === 'min') { closeActive(); render(); return; }
   if (a === 'check') {
     const s = ex.sets[si];
     if (!s.done) {
@@ -1018,7 +1090,11 @@ document.addEventListener('click', e => {
   try { await loadAll(); } catch (e) { toast('저장소를 열 수 없어요: ' + e.message, 5000); }
   derive();
   go('profile');
-  $('#activeBanner').addEventListener('click', openActive);
+  const ban = $('#activeBanner');
+  ban.addEventListener('click', openActive);
+  let by = 0;
+  ban.addEventListener('touchstart', e => { by = e.touches[0].clientY; }, { passive: true });
+  ban.addEventListener('touchend', e => { if (by && by - e.changedTouches[0].clientY > 30) openActive(); by = 0; }, { passive: true });
   setInterval(tick, 500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); if (S.sdsync.token && Date.now() - (S.sdsync.tried || 0) > 60000) sdSync(false); } });
   window.addEventListener('online', () => { if (S.sdsync.token) sdSync(false); });
