@@ -694,8 +694,7 @@ function deleteSet(ei, si) {
   const A = S.active; if (!A || !A.exercises[ei]) return;
   const ex = A.exercises[ei]; if (!ex.sets[si]) return;
   const snap = { ei, si, set: { ...ex.sets[si] }, name: ex.name };
-  if (restTimer && restTimer.ei === ei && restTimer.si === si) restTimer = null;
-  else if (restTimer && restTimer.ei === ei && restTimer.si > si) restTimer.si--;
+  if (!stopRestForSet(ei, si) && restTimer && restTimer.ei === ei && restTimer.si > si) restTimer.si--;
   ex.sets.splice(si, 1);
   save('active'); drawActive();
   toastAction('세트 삭제됨', '실행 취소', () => {
@@ -764,6 +763,7 @@ function activeClick(e) {
   if (a === 'restedit') { editRestInline(b, +rr.dataset.rei, si); return; }
   if (a === 'check') {
     const s = ex.sets[si];
+    const ei = +tr.dataset.ei;
     if (!s.done) {
       const lp = lastPerformance(ex.name); const p = lp && lp.ex.sets[si];
       if (s.w === '') s.w = s.pw || s.pr ? (s.pw || 0) : (p ? p.w : 0);
@@ -771,8 +771,12 @@ function activeClick(e) {
       s.done = true;
       // always auto-start rest between sets; skip only when this was the last open set of the whole workout
       const allDone = A.exercises.every(x => x.sets.every(z => z.done));
-      if (!allDone) { startRest(setRest(ex, s)); restTimer.ex = ex.name; restTimer.ei = +tr.dataset.ei; restTimer.si = si; } else { restTimer = null; }
-    } else s.done = false;
+      if (!allDone) { startRest(setRest(ex, s)); restTimer.ex = ex.name; restTimer.ei = ei; restTimer.si = si; } else { restTimer = null; }
+    } else {
+      s.done = false;
+      // unchecking the set that started the current rest → cancel it (no beep/toast)
+      stopRestForSet(ei, si);
+    }
     save('active'); drawActive(); return;
   }
   if (a === 'stype') { const order = ['n', 'W', 'D', 'F']; const s = ex.sets[si]; s.type = order[(order.indexOf(s.type) + 1) % 4]; save('active'); drawActive(); return; }
@@ -873,6 +877,14 @@ function startRest(sec) {
   sec = sec > 0 ? sec : DEFAULT_REST;
   try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
   restTimer = { end: Date.now() + sec * 1000, total: sec };
+}
+// Stop the running rest without beep/toast. Only clears if it belongs to the given set (ei/si).
+// Ad-hoc chip rests have no ei/si and are left alone. Returns true if stopped.
+function stopRestForSet(ei, si) {
+  if (!restTimer) return false;
+  if (restTimer.ei !== ei || restTimer.si !== si) return false;
+  restTimer = null;
+  return true;
 }
 function beep() {
   try {
