@@ -526,7 +526,8 @@ function bindSheetDrag(el) {
   let drag = null;
   const pt = e => e.touches ? e.touches[0] : e;
   const canStart = (target) => {
-    if (!target || target.closest('input, textarea, select, button, a, .rest-quick, label, .swipe-row')) return false;
+    if (numPad) return false;
+    if (!target || target.closest('input, textarea, select, button, a, .rest-quick, label, .swipe-row, #numpad, #numpadScrim, #rpePop')) return false;
     if (target.closest('.fhead, .sheet-handle')) return 'head';
     const body = el.querySelector('.fbody');
     if (body && body.contains(target) && body.scrollTop <= 1) return 'body';
@@ -618,6 +619,7 @@ function bindSetSwipe(root) {
     try { if (document.activeElement && drag.row.contains(document.activeElement)) document.activeElement.blur(); } catch (err) {}
   };
   const onStart = e => {
+    if (numPad) return;
     if (e.touches && e.touches.length > 1) return;
     const t = pt(e);
     if (t && t.clientX < 20) return; // ignore iOS left-edge back swipe
@@ -704,7 +706,6 @@ function deleteSet(ei, si) {
     save('active'); drawActive(); toast('삭제 취소됨');
   }, 4000);
 }
-function closeActive() { const el = $('#activeSheet'); if (el) el.remove(); updateBanner(); }
 function normalIndex(sets, si) { let n = 0; for (let i = 0; i <= si; i++) if (sets[i].type !== 'W') n++; return n; }
 function drawActive() {
   const el = $('#activeSheet'); if (!el) return; const A = S.active;
@@ -725,9 +726,9 @@ function drawActive() {
         <div class="swipe-front ${s.done ? 'done' : ''}"><div class="swipe-cols">
           <button class="stype ${s.type}" data-a="stype">${s.type === 'n' ? normalIndex(e.sets, si) : s.type}</button>
           <div class="prev">${p ? `<button type="button" class="prev-btn" data-a="useprev">${esc(p.w ? nfmt(toU(p.w, e.name)) + ' × ' + nfmt(p.r) : nfmt(p.r) + '렙')}</button>` : '—'}</div>
-          <input inputmode="decimal" data-f="w" value="${s.w === '' ? '' : nfmt(toU(s.w, e.name))}" placeholder="${ph && ph.w ? nfmt(toU(ph.w, e.name)) : ''}">
-          <input inputmode="numeric" data-f="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}">
-          <button class="check" data-a="check">${ICON.check}</button>
+          <input readonly inputmode="none" autocomplete="off" data-f="w" data-pad="w" value="${s.w === '' ? '' : nfmt(toU(s.w, e.name))}" placeholder="${ph && ph.w ? nfmt(toU(ph.w, e.name)) : ''}">
+          <input readonly inputmode="none" autocomplete="off" data-f="r" data-pad="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}">
+          <button class="check" data-a="check" ${s.rpe ? `title="RPE ${s.rpe}"` : ''}>${ICON.check}${s.rpe ? `<span class="rpe-dot">${s.rpe}</span>` : ''}</button>
         </div></div></div>
         <div class="rest-row ${s.done ? 'past' : ''}" data-rei="${ei}" data-rsi="${si}"><div class="rest-line"><i></i><button class="rest-time" data-a="restedit">${fmtClock(setRest(e, s))}</button></div></div>`;
       }).join('')}
@@ -740,6 +741,8 @@ function drawActive() {
   <div class="timer-bar" id="timerBar" hidden></div>`;
   el.querySelector('.fbody').scrollTop = scroll;
   drawTimer();
+  bindPadFields(el);
+  if (numPad) highlightPadField();
 }
 function activeInput(e) {
   const A = S.active;
@@ -844,21 +847,7 @@ function setRest(ex, s) { return s && s.rest > 0 ? s.rest : restFor(ex); }
 // keypad digits -> seconds: last two digits = seconds ("200"=2:00, "130"=1:30, "45"=0:45, "1000"=10:00, "90"=1:30)
 function digitsToSec(d) { d = String(d || '').replace(/\D/g, '').slice(-4); if (!d) return 0; const n = +d; return Math.floor(n / 100) * 60 + (n % 100); }
 function editRestInline(btn, ei, si) {
-  const A = S.active, ex = A.exercises[ei], s = ex.sets[si];
-  const cur = setRest(ex, s);
-  const inp = document.createElement('input');
-  inp.className = 'rest-input'; inp.setAttribute('inputmode', 'numeric'); inp.setAttribute('pattern', '[0-9]*'); inp.maxLength = 4;
-  inp.placeholder = String(Math.floor(cur / 60)) + pad(cur % 60);
-  btn.replaceWith(inp); inp.focus();
-  let doneEdit = false;
-  const commit = () => {
-    if (doneEdit) return; doneEdit = true;
-    const t = Math.min(3600, digitsToSec(inp.value));
-    if (t >= 5) applyRest(ei, si, t, false);
-    drawActive();
-  };
-  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } if (e.key === 'Escape') { doneEdit = true; drawActive(); } });
-  inp.addEventListener('blur', commit);
+  openNumpad({ mode: 'time', ei, si, el: btn });
 }
 function applyRest(ei, si, t, all) {
   const A = S.active, ex = A.exercises[ei];
@@ -873,6 +862,266 @@ function toastAction(msg, label, fn, ms = 4500) {
   b.addEventListener('click', ev => { ev.stopPropagation(); t.hidden = true; fn(); }); t.append(b);
   t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms);
 }
+
+/* ——— in-app numeric keypad (no native iOS keyboard) ——— */
+let numPad = null; // { mode:'w'|'r'|'time', ei, si, fresh, text }
+function ensureNumpad() {
+  if ($('#numpad')) return;
+  const scrim = document.createElement('div'); scrim.id = 'numpadScrim';
+  const padEl = document.createElement('div'); padEl.id = 'numpad'; padEl.setAttribute('aria-hidden', 'true');
+  padEl.innerHTML = `<div class="np-handle"><i></i></div>
+    <div class="np-grid">
+      <button type="button" class="np-k" data-k="1">1</button><button type="button" class="np-k" data-k="2">2</button><button type="button" class="np-k" data-k="3">3</button>
+      <button type="button" class="np-k np-hide" data-k="hide" aria-label="닫기">⌄</button>
+      <button type="button" class="np-k" data-k="4">4</button><button type="button" class="np-k" data-k="5">5</button><button type="button" class="np-k" data-k="6">6</button>
+      <button type="button" class="np-k np-rpe" data-k="rpe">RPE</button>
+      <button type="button" class="np-k" data-k="7">7</button><button type="button" class="np-k" data-k="8">8</button><button type="button" class="np-k" data-k="9">9</button>
+      <div class="np-step"><button type="button" data-k="dec">−</button><button type="button" data-k="inc">＋</button></div>
+      <button type="button" class="np-k" data-k="dot">.</button><button type="button" class="np-k" data-k="0">0</button><button type="button" class="np-k np-back" data-k="bs">⌫</button>
+      <button type="button" class="np-k np-next" data-k="next">다음</button>
+    </div>`;
+  const rpe = document.createElement('div'); rpe.id = 'rpePop';
+  rpe.innerHTML = `<div class="rh"><span>RPE</span><button type="button" data-rpe="x" style="border:0;background:transparent;color:#aaa;font-size:18px">✕</button></div>
+    <div class="rg">${[6,6.5,7,7.5,8,8.5,9,9.5,10].map(v => `<button type="button" data-rpe="${v}">${v}</button>`).join('')}</div>
+    <button type="button" class="rc" data-rpe="clear">지우기</button>`;
+  document.body.append(scrim, padEl, rpe);
+  // block sheet gestures
+  const stop = e => { e.stopPropagation(); };
+  padEl.addEventListener('touchstart', stop, { passive: true });
+  padEl.addEventListener('touchmove', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  rpe.addEventListener('touchstart', stop, { passive: true });
+  // swipe-down to dismiss
+  let dy0 = null;
+  padEl.addEventListener('touchstart', e => {
+    if (e.target.closest('.np-k, .np-step, button')) { dy0 = null; return; }
+    dy0 = e.touches[0].clientY;
+  }, { passive: true });
+  padEl.addEventListener('touchmove', e => {
+    if (dy0 == null) return;
+    const dy = e.touches[0].clientY - dy0;
+    if (dy > 10) padEl.style.transform = `translateY(${Math.min(dy, 220)}px)`;
+  }, { passive: true });
+  padEl.addEventListener('touchend', e => {
+    if (dy0 == null) return;
+    const dy = (e.changedTouches[0].clientY - dy0);
+    padEl.style.transform = '';
+    dy0 = null;
+    if (dy > 70) closeNumpad();
+  }, { passive: true });
+  padEl.addEventListener('click', onNumpadClick);
+  scrim.addEventListener('click', () => closeNumpad());
+  rpe.addEventListener('click', onRpeClick);
+}
+function bindPadFields(root) {
+  if (root._padBound) return; root._padBound = true;
+  const openFrom = (inp, e) => {
+    if (!inp || !inp.dataset.pad) return;
+    e.preventDefault(); e.stopPropagation();
+    try { inp.blur(); } catch (err) {}
+    const row = inp.closest('[data-ei][data-si]'); if (!row) return;
+    openNumpad({ mode: inp.dataset.pad, ei: +row.dataset.ei, si: +row.dataset.si, el: inp });
+  };
+  root.addEventListener('focusin', e => {
+    const inp = e.target.closest && e.target.closest('input[data-pad]');
+    if (inp) { e.preventDefault(); try { inp.blur(); } catch (err) {} }
+  }, true);
+  root.addEventListener('pointerdown', e => {
+    const inp = e.target.closest && e.target.closest('input[data-pad]');
+    if (inp) openFrom(inp, e);
+  }, true);
+  root.addEventListener('click', e => {
+    const inp = e.target.closest && e.target.closest('input[data-pad]');
+    if (inp) openFrom(inp, e);
+  }, true);
+}
+function openNumpad(opts) {
+  ensureNumpad();
+  const { mode, ei, si } = opts;
+  const A = S.active; if (!A || !A.exercises[ei] || !A.exercises[ei].sets[si]) return;
+  const s = A.exercises[ei].sets[si];
+  let text = '';
+  if (mode === 'w') text = s.w === '' ? '' : nfmt(toU(s.w, A.exercises[ei].name));
+  else if (mode === 'r') text = s.r === '' ? '' : nfmt(s.r);
+  else {
+    const cur = setRest(A.exercises[ei], s);
+    text = '';
+    // show current as placeholder via highlight only
+  }
+  numPad = { mode, ei, si, fresh: true, text: mode === 'time' ? '' : text };
+  const sheet = $('#activeSheet'); if (sheet) sheet.classList.add('pad-open');
+  $('#numpadScrim').classList.add('on');
+  const np = $('#numpad'); np.classList.add('on'); np.setAttribute('aria-hidden', 'false');
+  // decimal key visibility
+  const dot = np.querySelector('[data-k=dot]');
+  if (dot) {
+    if (mode === 'w') { dot.textContent = '.'; dot.classList.remove('np-empty'); }
+    else { dot.textContent = ''; dot.classList.add('np-empty'); }
+  }
+  // RPE only for w/r
+  const rpeBtn = np.querySelector('[data-k=rpe]');
+  if (rpeBtn) rpeBtn.style.visibility = mode === 'time' ? 'hidden' : 'visible';
+  highlightPadField();
+  scrollPadIntoView();
+  syncPadDisplay();
+}
+function closeNumpad() {
+  if (!numPad) return;
+  commitPad(false);
+  numPad = null;
+  const sheet = $('#activeSheet'); if (sheet) sheet.classList.remove('pad-open');
+  const np = $('#numpad'); if (np) { np.classList.remove('on'); np.setAttribute('aria-hidden', 'true'); np.style.transform = ''; }
+  const sc = $('#numpadScrim'); if (sc) sc.classList.remove('on');
+  const rp = $('#rpePop'); if (rp) rp.classList.remove('on');
+  $$('.pad-focus').forEach(el => el.classList.remove('pad-focus', 'pad-caret'));
+}
+function highlightPadField() {
+  $$('.pad-focus').forEach(el => el.classList.remove('pad-focus', 'pad-caret'));
+  if (!numPad) return;
+  let el = null;
+  if (numPad.mode === 'time') el = $(`#activeSheet .rest-row[data-rei="${numPad.ei}"][data-rsi="${numPad.si}"] .rest-time`);
+  else el = $(`#activeSheet .swipe-row[data-ei="${numPad.ei}"][data-si="${numPad.si}"] input[data-pad="${numPad.mode}"]`);
+  if (el) { el.classList.add('pad-focus', 'pad-caret'); }
+}
+function scrollPadIntoView() {
+  const body = $('#activeSheet .fbody'); if (!body || !numPad) return;
+  const el = numPad.mode === 'time'
+    ? $(`#activeSheet .rest-row[data-rei="${numPad.ei}"][data-rsi="${numPad.si}"]`)
+    : $(`#activeSheet .swipe-row[data-ei="${numPad.ei}"][data-si="${numPad.si}"]`);
+  if (!el) return;
+  const br = body.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const keypadH = ($('#numpad')?.offsetHeight || 280) + 24;
+  const limit = window.innerHeight - keypadH;
+  if (er.bottom > limit - 8) body.scrollTop += (er.bottom - limit + 16);
+  else if (er.top < br.top + 8) body.scrollTop -= (br.top + 8 - er.top);
+}
+function syncPadDisplay() {
+  if (!numPad) return;
+  const A = S.active, ex = A.exercises[numPad.ei], s = ex.sets[numPad.si];
+  if (numPad.mode === 'time') {
+    const btn = $(`#activeSheet .rest-row[data-rei="${numPad.ei}"][data-rsi="${numPad.si}"] .rest-time`);
+    if (btn) btn.textContent = numPad.text ? fmtClock(Math.min(3600, digitsToSec(numPad.text))) : fmtClock(setRest(ex, s));
+    return;
+  }
+  const inp = $(`#activeSheet .swipe-row[data-ei="${numPad.ei}"][data-si="${numPad.si}"] input[data-pad="${numPad.mode}"]`);
+  if (inp) inp.value = numPad.text;
+}
+function commitPad(saveDraw) {
+  if (!numPad || !S.active) return;
+  const A = S.active, ex = A.exercises[numPad.ei], s = ex.sets[numPad.si];
+  if (!ex || !s) return;
+  if (numPad.mode === 'w') {
+    const raw = numPad.text.replace(',', '.');
+    const val = raw === '' || raw === '.' ? '' : parseFloat(raw);
+    s.w = val === '' || isNaN(val) ? '' : fromU(val, ex.name);
+  } else if (numPad.mode === 'r') {
+    const val = numPad.text === '' ? '' : parseFloat(numPad.text);
+    s.r = val === '' || isNaN(val) ? '' : val;
+  } else if (numPad.mode === 'time' && numPad.text) {
+    const t = Math.min(3600, digitsToSec(numPad.text));
+    if (t >= 5) applyRest(numPad.ei, numPad.si, t, false);
+  }
+  save('active');
+  if (saveDraw) drawActive();
+}
+function onNumpadClick(e) {
+  const b = e.target.closest('[data-k]'); if (!b || !numPad) return;
+  e.preventDefault(); e.stopPropagation();
+  const k = b.dataset.k;
+  if (k === 'hide') { closeNumpad(); return; }
+  if (k === 'next') { padNext(); return; }
+  if (k === 'rpe') { openRpePop(); return; }
+  if (k === 'inc' || k === 'dec') { padStep(k === 'inc' ? 1 : -1); return; }
+  if (k === 'bs') {
+    if (numPad.fresh) { numPad.text = ''; numPad.fresh = false; }
+    else numPad.text = numPad.text.slice(0, -1);
+    syncPadDisplay(); commitPad(false); return;
+  }
+  if (k === 'dot') {
+    if (numPad.mode !== 'w') return;
+    if (numPad.fresh) { numPad.text = '0.'; numPad.fresh = false; }
+    else if (!numPad.text.includes('.')) numPad.text += '.';
+    syncPadDisplay(); return;
+  }
+  // digit
+  if (numPad.fresh) { numPad.text = k; numPad.fresh = false; }
+  else {
+    if (numPad.mode === 'time') { if (numPad.text.length >= 4) return; numPad.text += k; }
+    else {
+      if (numPad.text.replace('.', '').length >= 6) return;
+      numPad.text += k;
+    }
+  }
+  syncPadDisplay();
+  if (numPad.mode !== 'time') commitPad(false);
+}
+function padStep(dir) {
+  if (!numPad || numPad.mode === 'time') return;
+  const A = S.active, ex = A.exercises[numPad.ei], s = ex.sets[numPad.si];
+  if (numPad.mode === 'w') {
+    const cur = numPad.text === '' || numPad.text === '.' ? 0 : parseFloat(numPad.text) || 0;
+    const next = Math.max(0, Math.round((cur + dir * 2.5) * 100) / 100);
+    numPad.text = nfmt(next); numPad.fresh = true;
+  } else {
+    const cur = numPad.text === '' ? 0 : parseFloat(numPad.text) || 0;
+    const next = Math.max(0, Math.round(cur + dir * 1));
+    numPad.text = nfmt(next); numPad.fresh = true;
+  }
+  syncPadDisplay(); commitPad(false);
+}
+function padNext() {
+  if (!numPad) return;
+  commitPad(false);
+  if (numPad.mode === 'time') { closeNumpad(); drawActive(); return; }
+  const A = S.active;
+  if (numPad.mode === 'w') {
+    openNumpad({ mode: 'r', ei: numPad.ei, si: numPad.si });
+    return;
+  }
+  // after reps → next set kg (same exercise first, then next exercises)
+  let ei = numPad.ei, si = numPad.si + 1;
+  while (ei < A.exercises.length) {
+    const ex = A.exercises[ei];
+    if (si < ex.sets.length) { openNumpad({ mode: 'w', ei, si }); return; }
+    ei++; si = 0;
+  }
+  closeNumpad();
+  drawActive();
+}
+function openRpePop() {
+  if (!numPad || numPad.mode === 'time') return;
+  ensureNumpad();
+  const rp = $('#rpePop');
+  const s = S.active.exercises[numPad.ei].sets[numPad.si];
+  rp.querySelectorAll('[data-rpe]').forEach(b => {
+    if (b.dataset.rpe === 'x' || b.dataset.rpe === 'clear') return;
+    b.classList.toggle('on', String(s.rpe) === b.dataset.rpe);
+  });
+  rp.classList.add('on');
+}
+function onRpeClick(e) {
+  const b = e.target.closest('[data-rpe]'); if (!b || !numPad) return;
+  e.preventDefault();
+  const v = b.dataset.rpe;
+  if (v === 'x') { $('#rpePop').classList.remove('on'); return; }
+  const s = S.active.exercises[numPad.ei].sets[numPad.si];
+  if (v === 'clear') delete s.rpe;
+  else s.rpe = parseFloat(v);
+  save('active');
+  $('#rpePop').classList.remove('on');
+  // refresh tag without closing numPad
+  const keep = { ...numPad, fresh: numPad.fresh, text: numPad.text };
+  drawActive();
+  numPad = keep;
+  highlightPadField();
+  const sheet = $('#activeSheet'); if (sheet) sheet.classList.add('pad-open');
+  $('#numpadScrim').classList.add('on');
+  $('#numpad').classList.add('on');
+}
+function closeActive() {
+  closeNumpad();
+  const el = $('#activeSheet'); if (el) el.remove(); updateBanner();
+}
+
 function startRest(sec) {
   sec = sec > 0 ? sec : DEFAULT_REST;
   try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
@@ -928,7 +1177,7 @@ function finishWorkout() {
   else if (!confirm('워크아웃을 완료할까요? (체크 안 된 세트는 제외)')) return;
   const w = { id: A.id, name: (A.name || '워크아웃').trim(), start: isoLocal(new Date(A.startTs)), duration: Math.round((Date.now() - A.startTs) / 1000), note: A.note || '', exercises: [] };
   for (const e of A.exercises) {
-    const sets = e.sets.filter(s => anyDone ? s.done : (s.w !== '' || s.r !== '')).map(s => ({ w: +s.w || 0, r: +s.r || 0, type: s.type || 'n' }));
+    const sets = e.sets.filter(s => anyDone ? s.done : (s.w !== '' || s.r !== '')).map(s => { const o = { w: +s.w || 0, r: +s.r || 0, type: s.type || 'n' }; if (s.rpe) o.rpe = s.rpe; return o; });
     if (sets.length) w.exercises.push({ name: e.name, sets, rest: e.rest });
   }
   if (!w.exercises.length) { toast('저장할 세트가 없어요'); return; }
@@ -1149,7 +1398,7 @@ async function importJsonFile(file) {
     derive(); render(); toast('복원 완료');
   } catch (e) { toast('복원 실패: ' + e.message, 4000); }
 }
-function stamp() { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`; }
+function stamp() { const d = new Date(); return `${d.getFullYear()}${numPad(d.getMonth() + 1)}${numPad(d.getDate())}`; }
 function clean(w) { return JSON.parse(JSON.stringify(w, (k, v) => k.startsWith('_') ? undefined : v)); }
 function editWorkout(id) {
   const w = S.workouts.find(x => x.id === id); if (!w) return;
@@ -1209,7 +1458,7 @@ document.addEventListener('click', e => {
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
         <div class="field"><label>체중 (${S.settings.unit})</label><input class="bwv" inputmode="decimal" type="number" step="0.1" value="${lastBw ? nfmt(toU(lastBw.kg)) : ''}"></div>
         <div class="field"><label>날짜</label><input class="bwd" type="date" value="${dayKey(new Date())}"></div>`, { bottom: true });
-      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${pad(now.getHours())}:${pad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
+      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${numPad(now.getHours())}:${numPad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
       break;
     }
     case 'bw-list': {
@@ -1352,7 +1601,7 @@ function sdCardHtml() {
   <label class="btn light" style="margin-bottom:12px">심플다이어트 CSV 가져오기<input type="file" accept=".csv,text/csv,text/plain" class="f-sdcsv" hidden></label>
   <div class="bold" style="margin-bottom:4px">심플다이어트 연동 (읽기 전용 자동 동기화)</div>
   <div class="muted tiny" style="line-height:1.5;margin-bottom:8px">심플다이어트가 동기화하는 GitHub 저장소 <b>uhyun6907-boop/sd-data</b>의 records.json을 읽어와요. 이 앱은 sd-data에 절대 쓰지 않아요.<br>심플다이어트에 넣은 토큰을 그대로 붙여넣어도 되고, <b>sd-data 저장소에 Contents 읽기(Read-only) 권한만 있는 fine-grained 토큰</b>이면 충분해요. 토큰은 이 기기에만 저장돼요 (백업 파일에도 안 들어가요).</div>
-  ${z.token ? `<div class="list-row"><span>상태</span><span class="small" style="text-align:right">${z.err ? `<span style="color:var(--red)">${esc(z.err)}</span>` : last ? `✅ ${fmtShort(last)} ${pad(last.getHours())}:${pad(last.getMinutes())} · ${(z.count || 0).toLocaleString('ko-KR')}개` : '아직 동기화 안 함'}</span></div>
+  ${z.token ? `<div class="list-row"><span>상태</span><span class="small" style="text-align:right">${z.err ? `<span style="color:var(--red)">${esc(z.err)}</span>` : last ? `✅ ${fmtShort(last)} ${numPad(last.getHours())}:${numPad(last.getMinutes())} · ${(z.count || 0).toLocaleString('ko-KR')}개` : '아직 동기화 안 함'}</span></div>
     ${z.lastMsg ? `<div class="muted tiny" style="margin:-4px 0 8px;text-align:right">${esc(z.lastMsg)}</div>` : ''}
     <button class="btn" data-sd="sync" style="margin-bottom:8px">${sdBusy ? '동기화 중…' : '지금 동기화'}</button>
     <button class="btn gray" data-sd="off">연동 해제 (토큰 삭제)</button>`
