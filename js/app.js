@@ -215,6 +215,7 @@ function lineChart(pts, opts = {}) {
   const xs = pts.map(p => +p.x), ys = pts.map(p => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs); if (opts.from && opts.from < x0) x0 = opts.from; if (x1 === x0) { x0 -= 864e5 * 7; x1 += 864e5 * 7; }
   if (opts.ref != null) ys.push(opts.ref);
+  if (opts.target != null) ys.push(opts.target);
   let y0 = Math.min(...ys), y1 = Math.max(...ys); const padY = Math.max((y1 - y0) * 0.12, 1); y0 = Math.max(0, y0 - padY); y1 = y1 + padY;
   const X = x => L + (W - L - R) * (x - x0) / (x1 - x0), Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
   const u0 = opts.unit || '';
@@ -229,7 +230,8 @@ function lineChart(pts, opts = {}) {
   }
   const u = opts.unit || '';
   s += `<text x="${W - R + 6}" y="${T + 4}">${Math.round(y1)} ${u}</text><text x="${W - R + 6}" y="${H - B}">${Math.round(y0)} ${u}</text>`;
-  if (opts.ref != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(opts.ref)}" y2="${Y(opts.ref)}" stroke="var(--purple)" stroke-dasharray="4 4" opacity=".45"/><text x="${W - R + 6}" y="${Y(opts.ref) + 4}" style="fill:var(--purple)">${Math.round(opts.ref)}</text>`;
+  if (opts.ref != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(opts.ref)}" y2="${Y(opts.ref)}" stroke="var(--purple)" stroke-dasharray="4 4" opacity=".45"/><text x="${W - R + 6}" y="${Y(opts.ref) + 4}" style="fill:var(--purple)">${opts.round ? nfmt(Math.round(opts.ref / opts.round) * opts.round) : Math.round(opts.ref)}</text>`;
+  if (opts.target != null) s += `<line x1="${L}" x2="${W - R}" y1="${Y(opts.target)}" y2="${Y(opts.target)}" stroke="var(--blue)" stroke-dasharray="5 4" stroke-width="1.4" opacity=".75"/><text x="${W - R + 6}" y="${Y(opts.target) + 4}" style="fill:var(--blue);font-weight:700">${opts.round ? nfmt(Math.round(opts.target / opts.round) * opts.round) : Math.round(opts.target)}</text>`;
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(+p.x).toFixed(1) + ',' + Y(p.y).toFixed(1)).join('');
   s += `<path d="${d}" fill="none" stroke="var(--purple-l)" stroke-width="2.2" stroke-linejoin="round"/>`;
   if (pts.length <= 80) pts.forEach(p => s += `<circle cx="${X(+p.x)}" cy="${Y(p.y)}" r="3.2" fill="#fff" stroke="var(--purple-l)" stroke-width="1.8"/>`);
@@ -301,7 +303,7 @@ function renderProfile(v) {
       <div class="row"><button class="pill" data-act="bw-list">목록</button><button class="pill" data-act="bw-add">＋</button></div></div>
     <div style="margin-top:10px">${lineChart(bwPts, { unit: S.settings.unit })}</div>${rangeBtns('bw')}<div class="muted tiny" style="margin-top:6px">${S.settings.bwSrc === 'pm' ? `오후 기록만 · 하루 중 가장 늦은 오후 값${bwSkipped ? ` · 오후 기록 없는 ${bwSkipped.toLocaleString('ko-KR')}일 제외` : ''}` : '하루 첫(아침) 기록 기준'}${S.sdsync.token ? ' · 심플다이어트 연동됨' : ''}</div>
   </div>
-  ${S.settings.dash.map(name => {
+  ${(() => { const t400 = big3Targets400(); return S.settings.dash.map(name => {
     const from = rangeFrom(name);
     const pts = prPoints(name, from);
     const all = dailyRm(name, 0);
@@ -310,12 +312,13 @@ function renderProfile(v) {
     const recent = all.filter(d => +d.date >= Date.now() - 92 * 864e5);
     const cur = recent.length ? recent.reduce((a, d) => d.rm > a.rm ? d : a) : lastD;
     const bestD = all.length ? all.reduce((a, d) => d.rm > a.rm ? d : a) : null;
-    return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (세션별 추정 1RM)</div></div>
+    const goal = t400 && t400.byName[name];
+    return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (세션별 추정 1RM)${goal ? ` · <span style="color:var(--blue)">400 목표 ${nfmt(goal)}</span>` : ''}</div></div>
       <button class="dots" data-act="ex-detail" data-name="${esc(name)}">•••</button></div>
       ${cur ? `<div style="margin-top:8px"><span class="muted small bold">현재 1RM 추정</span> <span style="font-size:26px;font-weight:800;color:var(--purple)">${fmtRm(cur.rm, name)}</span>
         <div class="muted tiny">${recent.length ? '최근 3개월 최고' : '마지막 기록'} · ${fmtShort(cur.date)}${bestD ? ` &nbsp;|&nbsp; 역대 최고 ${fmtRm(bestD.rm, name)} (${fmtShort(bestD.date)})` : ''}</div></div>` : ''}
-      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), round: 0.5, from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null })}</div>${rangeBtns(name)}</div>`;
-  }).join('')}
+      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), round: 0.5, from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null, target: goal || null })}</div>${rangeBtns(name)}</div>`;
+  }).join(''); })()}
   <button class="btn light" data-act="dash-edit" style="margin-bottom:10px">＋ 차트 운동 추가</button>
   ${n === 0 ? `<div class="card empty">아직 기록이 없어요.<br>설정에서 Strong CSV를 가져오거나<br>워크아웃을 시작해보세요.<br><br><button class="btn" data-act="settings">CSV 가져오기</button></div>` : ''}`;
 }
@@ -327,16 +330,65 @@ function liftBest(name) {
   for (const d of all) { if (d.rm > best) best = d.rm; if (+d.date >= cutoff && d.rm > cur) cur = d.rm; }
   return { cur, best };
 }
+// Round display kg/lb to 0.5 (same as 3대 card).
+function r05u(kg) { return Math.round(toU(kg) * 2) / 2; }
+/** Scale three positive numbers so they sum to exactly 400, each on a 0.5 grid. */
+function scaleThreeTo400(a, b, c) {
+  const sum = a + b + c;
+  if (!(sum > 0)) return null;
+  const raw = [a, b, c].map(x => (x / sum) * 400);
+  const out = raw.map(x => Math.round(x * 2) / 2);
+  let diff = Math.round((400 - (out[0] + out[1] + out[2])) * 2); // ± half-units
+  // nudge largest lifts first so the visual shape stays true
+  const order = [0, 1, 2].sort((i, j) => out[j] - out[i]);
+  for (let n = 0; diff !== 0 && n < 30; n++) {
+    const i = order[n % 3];
+    if (diff > 0) { out[i] = Math.round((out[i] + 0.5) * 2) / 2; diff--; }
+    else if (out[i] >= 0.5) { out[i] = Math.round((out[i] - 0.5) * 2) / 2; diff++; }
+  }
+  return out;
+}
+/** Personal 400-total targets from last-3-month e1RMs (squat / bench / best dead). Recomputed from IndexedDB. */
+function big3Targets400() {
+  const sq = liftBest('Squat (Barbell)'), bp = liftBest('Bench Press (Barbell)');
+  const dl = liftBest('Deadlift (Barbell)'), su = liftBest('Sumo Deadlift (Barbell)');
+  const deadIsSumo = su.cur > dl.cur;
+  const deadCur = deadIsSumo ? su.cur : dl.cur;
+  const deadName = deadIsSumo ? 'Sumo Deadlift (Barbell)' : 'Deadlift (Barbell)';
+  if (!sq.cur && !bp.cur && !deadCur) return null;
+  const parts = scaleThreeTo400(r05u(sq.cur), r05u(bp.cur), r05u(deadCur));
+  if (!parts) return null;
+  return {
+    squat: parts[0], bench: parts[1], dead: parts[2],
+    deadName, deadIsSumo, deadLabel: deadIsSumo ? '데드(스모)' : '데드',
+    raw: { squat: r05u(sq.cur), bench: r05u(bp.cur), dead: r05u(deadCur) },
+    byName: {
+      'Squat (Barbell)': parts[0],
+      'Bench Press (Barbell)': parts[1],
+      [deadName]: parts[2],
+    },
+  };
+}
 function big3Card() {
   const u = S.settings.unit;
-  const r05 = kg => Math.round(toU(kg) * 2) / 2;
   const sq = liftBest('Squat (Barbell)'), bp = liftBest('Bench Press (Barbell)');
   const dl = liftBest('Deadlift (Barbell)'), su = liftBest('Sumo Deadlift (Barbell)');
   if (!sq.best && !bp.best && !dl.best && !su.best) return '';
   const pick = k => (su[k] > dl[k] ? { v: su[k], lab: '데드(스모)' } : { v: dl[k], lab: '데드' });
   const dCur = pick('cur'), dBest = pick('best');
-  const part = (lab, v) => `<span>${lab} <b>${v ? nfmt(r05(v)) : '–'}</b></span>`;
-  const tot = (a, b, c) => nfmt(r05(a) + r05(b) + r05(c));
+  const part = (lab, v) => `<span>${lab} <b>${v ? nfmt(r05u(v)) : '–'}</b></span>`;
+  const tot = (a, b, c) => nfmt(r05u(a) + r05u(b) + r05u(c));
+  const t400 = big3Targets400();
+  const goalRow = t400 ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #DDD3F3">
+      <div class="between" style="align-items:baseline"><div class="muted small bold">400 ${esc(u)} 목표 <span class="tiny">(내 3대 비율)</span></div>
+        <span class="muted tiny">합 ${nfmt(t400.squat + t400.bench + t400.dead)}</span></div>
+      <div style="display:flex;gap:10px;margin-top:6px;font-size:14px;font-weight:700;color:#333;flex-wrap:wrap">
+        <span>스쿼트 <b style="color:var(--blue)">${nfmt(t400.squat)}</b></span>
+        <span>벤치 <b style="color:var(--blue)">${nfmt(t400.bench)}</b></span>
+        <span>${esc(t400.deadLabel)} <b style="color:var(--blue)">${nfmt(t400.dead)}</b></span>
+      </div>
+      <div class="muted tiny" style="margin-top:4px">차트 파란 점선 = 이 목표 · 기기 기록으로 매번 다시 계산</div>
+    </div>` : '';
   return `<div class="card" style="background:linear-gradient(135deg,#F4ECFE,#EAF4FE);border-color:#E3D6FA">
     <div class="between"><h3>3대 (추정 1RM 합계)</h3><span class="muted tiny">스쿼트+벤치+데드</span></div>
     <div style="display:flex;gap:12px;margin-top:10px">
@@ -346,7 +398,7 @@ function big3Card() {
       <div style="flex:1;border-left:1px solid #DDD3F3;padding-left:12px"><div class="muted small bold">역대 최고</div>
         <div style="font-size:34px;font-weight:800;color:#333;line-height:1.15">${tot(sq.best, bp.best, dBest.v)}<span style="font-size:16px"> ${u}</span></div>
         <div class="muted tiny" style="display:flex;flex-direction:column;gap:1px;margin-top:4px">${part('스쿼트', sq.best)}${part('벤치', bp.best)}${part(dBest.lab, dBest.v)}</div></div>
-    </div></div>`;
+    </div>${goalRow}</div>`;
 }
 
 /* ================= history ================= */
@@ -524,34 +576,34 @@ function buildCoachAdvice(ctx) {
       liftNotes.push(`${short} 볼륨이 지난번보다 늘었어요. 좋은 흐름이에요.`);
     } else if (pVol && curVol < pVol * 0.9) {
       down++;
-      liftNotes.push(`${short} 볼륨이 지난번보다 줄었어요. 의도한 딜로드면 괜찮고, 아니라면 세트 하나만 더 해봐요.`);
+      liftNotes.push(`${short} 볼륨이 지난번보다 줄었어요. 의도한 딜로드면 괜찮아요. 다음엔 같은 구성으로 무게나 렙만 조금 올려 봐요.`);
     }
   }
   // pick up to 2 most specific lift notes
   for (const n of liftNotes.slice(0, 2)) tips.push(n);
 
   if (prs && !tips.some(t => t.includes('1RM') || t.includes('올려'))) {
-    tips.push(`이번 세션에서 신기록 움직임이 ${prs}개 있었어요. 그 자극을 다음 주에 이어가 봐요.`);
+    tips.push(`이번 세션에서 신기록 움직임이 ${prs}개 있었어요. 다음에 같은 리프트를 할 때 그 자극을 이어가 봐요.`);
   }
 
-  // short / light session
-  if (exN <= 2 || setN <= 4 || (durMin > 0 && durMin < 25)) {
-    tips.push('세션이 짧게 끝났어요. 회복 날이면 충분하고, 본 운동 루틴이라면 다음엔 보조 운동 1–2개만 더해도 좋아요.');
+  // User trains 1 main + 1 accessory — never suggest adding movements / lengthening the day.
+  // Short sessions are fine; only note recovery if useful (no "운동 더 하세요").
+  if (durMin > 0 && durMin < 20 && kind === 'yesterday') {
+    tips.push('짧게 잘 끝냈어요. 회복 잘 챙기고, 다음에도 하던 구성 그대로 무게·렙만 보면 충분해요.');
   }
 
   // frequency
   if (kind === 'recent' && daysAgo >= 2) {
-    if (daysAgo >= 5) tips.push(`마지막 운동 후 ${daysAgo}일이 지났어요. 짧게라도 메인 리프트 하나부터 다시 열어봐요.`);
-    else tips.push(`어제는 쉬는 날이었고, 마지막 운동은 ${daysAgo}일 전이에요. 컨디션 괜찮으면 오늘 가볍게 열어봐도 좋아요.`);
+    if (daysAgo >= 5) tips.push(`마지막 운동 후 ${daysAgo}일이 지났어요. 컨디션 되면 평소 루틴(메인 하나 + 보조 하나)으로 다시 열어봐요.`);
+    else tips.push(`어제는 쉬는 날이었고, 마지막 운동은 ${daysAgo}일 전이에요. 컨디션 괜찮으면 평소 페이스로 이어가도 좋아요.`);
   } else if (kind === 'yesterday') {
     const avg4 = weeklyWorkoutDayAvg(4);
-    // only comment on frequency when there is a meaningful sample
     const days4 = Math.round(avg4 * 4);
-    if (days4 >= 3 && avg4 < 2.8) tips.push(`최근 4주 평균 주 ${nfmt(Math.round(avg4 * 10) / 10)}일 운동 중이에요. 루틴이 비면 주 3–4일을 목표로 잡아보세요.`);
+    if (days4 >= 3 && avg4 < 2.8) tips.push(`최근 4주 평균 주 ${nfmt(Math.round(avg4 * 10) / 10)}일 운동 중이에요. 무리 없이 주 3–4일 페이스면 충분해요.`);
     else if (days4 >= 12) tips.push(`최근 4주 주 ${nfmt(Math.round(avg4 * 10) / 10)}일 꼴로 잘 나오고 있어요. 회복만 챙기면 이 페이스 유지해 봐요.`);
   }
 
-  // neglected main lifts
+  // neglected main lifts — when they next rotate to it, not "add it today"
   const today = new Date(); today.setHours(0, 0, 0, 0);
   for (const m of MAIN_LIFTS) {
     let latest = null;
@@ -564,7 +616,7 @@ function buildCoachAdvice(ctx) {
     if (!latest) continue;
     const gap = daysBetween(today, latest);
     if (gap > 10) {
-      tips.push(`${m.label}를 ${gap}일째 안 했어요. 다음 세션에 워밍업 세트만이라도 넣어보세요.`);
+      tips.push(`${m.label}는 ${gap}일 만에 다시 돌아올 차례예요. 다음에 ${m.label} 날이면 워밍업부터 천천히 열어봐요.`);
       break;
     }
   }
@@ -584,10 +636,10 @@ function buildCoachAdvice(ctx) {
     } catch (e) {}
   }
 
-  // fallback warmth
+  // fallback warmth — progress what they already do, never add lifts
   if (!tips.length) {
-    if (kind === 'yesterday') tips.push('어제 세션 잘 마무리했어요. 오늘은 같은 자극을 조금 더하거나, 약한 부위 보조 운동을 하나 넣어보세요.');
-    else tips.push('최근 기록 잘 쌓고 있어요. 다음 세션에선 가장 잘 오른 리프트를 조금 더 밀어보세요.');
+    if (kind === 'yesterday') tips.push('어제 세션 잘 마무리했어요. 다음엔 같은 리프트에서 무게나 렙만 살짝 올려 보면 좋아요.');
+    else tips.push('최근 기록 잘 쌓고 있어요. 다음 세션에선 하던 메인 리프트를 조금 더 밀어보세요.');
   }
   return tips.slice(0, 4);
 }
@@ -1774,7 +1826,7 @@ function bindBannerOpen(ban) {
     const msg = up === 'manual' ? `최신 버전으로 새로고침됨 (v${V})` : (lastV && V > lastV) || (!lastV && S.workouts.length) || (up && up !== 'manual') ? `새 버전으로 업데이트됨 (v${V})` : '';
     if (msg) setTimeout(() => toast(msg, 3500), 400);
   } catch (e) {}
-  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, coachCardHtml, pickCoachWorkout, buildCoachAdvice };
+  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, coachCardHtml, pickCoachWorkout, buildCoachAdvice, big3Targets400, scaleThreeTo400, liftBest };
 })();
 
 /* ================= 심플다이어트 ================= */
