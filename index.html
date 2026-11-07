@@ -14,7 +14,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <script>
 /* update guard: runs before the app. Never touches IndexedDB (user data). */
-window.APP_VERSION = 21;
+window.APP_VERSION = 22;
 (function () {
   var V = window.APP_VERSION, SCOPE = '/workout-app/';
   try { if (/[?&]u=\d+/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
@@ -57,7 +57,7 @@ window.APP_VERSION = 21;
   window.addEventListener('pageshow', function (e) { if (e.persisted) checkVersion(); });
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=21">
+<link rel="stylesheet" href="styles.css?v=22">
 </head>
 <body>
 <div id="app">
@@ -73,9 +73,9 @@ window.APP_VERSION = 21;
   <div id="sheets"></div>
   <div id="toast" hidden></div>
 </div>
-<script src="js/exercises.js?v=21"></script>
-<script src="js/csv.js?v=21"></script>
-<script src="js/sd.js?v=21"></script>
-<script src="js/app.js?v=21"></script>
+<script src="js/exercises.js?v=22"></script>
+<script src="js/csv.js?v=22"></script>
+<script src="js/sd.js?v=22"></script>
+<script src="js/app.js?v=22"></script>
 </body>
 </html>

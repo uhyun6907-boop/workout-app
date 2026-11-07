@@ -290,6 +290,7 @@ function renderProfile(v) {
   <h1 class="big">프로필</h1>
   <div class="profile-head"><div class="avatar">${ICON.person}</div><div><div class="bold" style="font-size:20px">${esc(S.settings.name)}</div><div class="muted" style="font-size:17px;font-weight:600">${n.toLocaleString('ko-KR')} 워크아웃</div></div></div>
   ${big3Card()}
+  ${big3ChartCard()}
   <div class="section-h"><span>대시보드</span></div>
   <div class="card">
     <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 운동한 날 수 · 목표 주 ${S.settings.goal}일</div></div>
@@ -307,7 +308,7 @@ function renderProfile(v) {
     const all = dailyRm(name, 0);
     const b = D.best[name];
     const lastD = all[all.length - 1];
-    const recent = all.filter(d => +d.date >= Date.now() - 92 * 864e5);
+    const recent = all.filter(d => +d.date >= Date.now() - BIG3_WINDOW_MS);
     const cur = recent.length ? recent.reduce((a, d) => d.rm > a.rm ? d : a) : lastD;
     const bestD = all.length ? all.reduce((a, d) => d.rm > a.rm ? d : a) : null;
     const goal = t400 && t400.byName[name];
@@ -322,8 +323,10 @@ function renderProfile(v) {
 }
 
 /* ================= 3대 ================= */
+// Same window the current 3대 number uses ("최근 3개월").
+const BIG3_WINDOW_MS = 92 * 864e5;
 function liftBest(name) {
-  const all = dailyRm(name, 0); const cutoff = Date.now() - 92 * 864e5;
+  const all = dailyRm(name, 0); const cutoff = Date.now() - BIG3_WINDOW_MS;
   let cur = 0, best = 0;
   for (const d of all) { if (d.rm > best) best = d.rm; if (+d.date >= cutoff && d.rm > cur) cur = d.rm; }
   return { cur, best };
@@ -366,6 +369,66 @@ function big3Targets400() {
       [deadName]: parts[2],
     },
   };
+}
+function bestRmAsOf(series, t) {
+  const cutoff = t - BIG3_WINDOW_MS;
+  let best = 0;
+  for (const d of series) {
+    const ts = +d.date;
+    if (ts > t) break;
+    if (ts >= cutoff && d.rm > best) best = d.rm;
+  }
+  return best;
+}
+// Rolling 3대 as of timestamp t: best squat + best bench + stronger deadlift style, each rounded to 0.5 then summed.
+function big3ValueAt(sq, bp, dl, su, t) {
+  const deadConv = bestRmAsOf(dl, t), deadSumo = bestRmAsOf(su, t);
+  const dead = deadSumo > deadConv ? deadSumo : deadConv;
+  return r05u(bestRmAsOf(sq, t)) + r05u(bestRmAsOf(bp, t)) + r05u(dead);
+}
+// One point per day squat, bench, or either deadlift was trained (they are almost never the same day).
+// y uses the preceding 3 months as of the end of that day — not that session's e1RM, and not "all three today".
+// A trailing point at now matches the current 3대 number when today was not itself a big-three day.
+function big3Points(from) {
+  const sq = dailyRm('Squat (Barbell)', 0);
+  const bp = dailyRm('Bench Press (Barbell)', 0);
+  const dl = dailyRm('Deadlift (Barbell)', 0);
+  const su = dailyRm('Sumo Deadlift (Barbell)', 0);
+  const days = new Map();
+  const add = arr => {
+    for (const d of arr) {
+      const k = dayKey(d.date), x = +d.date;
+      if (!days.has(k) || x > days.get(k)) days.set(k, x);
+    }
+  };
+  add(sq); add(bp); add(dl); add(su);
+  const pts = [];
+  for (const x of [...days.values()].sort((a, b) => a - b)) {
+    if (from && x < from) continue;
+    const end = new Date(x);
+    end.setHours(23, 59, 59, 999);
+    const y = big3ValueAt(sq, bp, dl, su, Math.min(+end, Date.now()));
+    if (y > 0) pts.push({ x, y });
+  }
+  const now = Date.now();
+  if ((!from || now >= from) && (!pts.length || dayKey(new Date(pts[pts.length - 1].x)) !== dayKey(new Date(now)))) {
+    const y = big3ValueAt(sq, bp, dl, su, now);
+    if (y > 0) pts.push({ x: now, y });
+  }
+  return pts;
+}
+function big3ChartCard() {
+  const sq = liftBest('Squat (Barbell)'), bp = liftBest('Bench Press (Barbell)');
+  const dl = liftBest('Deadlift (Barbell)'), su = liftBest('Sumo Deadlift (Barbell)');
+  if (!sq.best && !bp.best && !dl.best && !su.best) return '';
+  const from = rangeFrom('big3');
+  const pts = big3Points(from);
+  const u = S.settings.unit;
+  return `<div class="card">
+    <div><h3>3대 합계</h3><div class="sub">운동한 날 기준 · 그날까지 최근 3개월 최고 추정 1RM 합 · <span style="color:var(--blue)">400 ${esc(u)} 목표</span></div></div>
+    <div style="margin-top:6px">${lineChart(pts, { unit: u, round: 0.5, from: from || undefined, target: 400 })}</div>${rangeBtns('big3')}
+    <div class="muted tiny" style="margin-top:6px">스쿼트 + 벤치 + 데드(컨벤셔널·스모 중 높은 쪽) · 한 날 하나만 해도 이전 3개월을 합산</div>
+  </div>`;
 }
 function big3Card() {
   const u = S.settings.unit;
@@ -1619,7 +1682,7 @@ function bindBannerOpen(ban) {
     const msg = up === 'manual' ? `최신 버전으로 새로고침됨 (v${V})` : (lastV && V > lastV) || (!lastV && S.workouts.length) || (up && up !== 'manual') ? `새 버전으로 업데이트됨 (v${V})` : '';
     if (msg) setTimeout(() => toast(msg, 3500), 400);
   } catch (e) {}
-  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, big3Targets400, scaleThreeTo400, liftBest };
+  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, big3Targets400, scaleThreeTo400, liftBest, big3Points, big3ValueAt };
 })();
 
 /* ================= 심플다이어트 ================= */
