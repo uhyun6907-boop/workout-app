@@ -290,6 +290,7 @@ function renderProfile(v) {
   <h1 class="big">프로필</h1>
   <div class="profile-head"><div class="avatar">${ICON.person}</div><div><div class="bold" style="font-size:20px">${esc(S.settings.name)}</div><div class="muted" style="font-size:17px;font-weight:600">${n.toLocaleString('ko-KR')} 워크아웃</div></div></div>
   ${big3Card()}
+  ${big3ChartCard()}
   <div class="section-h"><span>대시보드</span></div>
   <div class="card">
     <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 운동한 날 수 · 목표 주 ${S.settings.goal}일</div></div>
@@ -366,6 +367,28 @@ function big3Targets400() {
       [deadName]: parts[2],
     },
   };
+}
+function big3Series() {
+  const W = 92 * 864e5;
+  const L = [dailyRm('Squat (Barbell)', 0), dailyRm('Bench Press (Barbell)', 0), dailyRm('Deadlift (Barbell)', 0).concat(dailyRm('Sumo Deadlift (Barbell)', 0))];
+  const days = [...new Set(L.flat().map(d => dayKey(d.date)))].sort();
+  const out = [];
+  for (const k of days) {
+    const t = pd(k + 'T23:59:59');
+    const best = L.map(arr => arr.reduce((m, d) => (+d.date <= +t && +d.date > +t - W && d.rm > m ? d.rm : m), 0));
+    if (best.some(v => !v)) continue;
+    out.push({ x: pd(k + 'T12:00:00'), y: best.reduce((a, v) => a + r05u(v), 0) });
+  }
+  return out;
+}
+function big3ChartCard() {
+  const all = big3Series(); if (!all.length) return '';
+  const from = rangeFrom('big3');
+  const pts = all.filter(p => +p.x >= from);
+  const last = all[all.length - 1];
+  return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>3대</h3><div class="sub">3대 합계 진행 (각 리프트 최근 3개월 최고 추정 1RM) · <span style="color:var(--blue)">목표 ${nfmt(r05u(400))}</span></div></div></div>
+    <div style="margin-top:8px"><span class="muted small bold">현재 3대 합계</span> <span style="font-size:26px;font-weight:800;color:var(--purple)">${nfmt(last.y)} ${S.settings.unit}</span></div>
+    <div style="margin-top:6px">${lineChart(pts.length ? pts : all.slice(-1), { unit: S.settings.unit, round: 0.5, from: from || undefined, target: r05u(400) })}</div>${rangeBtns('big3')}</div>`;
 }
 function big3Card() {
   const u = S.settings.unit;
@@ -1619,7 +1642,7 @@ function bindBannerOpen(ban) {
     const msg = up === 'manual' ? `최신 버전으로 새로고침됨 (v${V})` : (lastV && V > lastV) || (!lastV && S.workouts.length) || (up && up !== 'manual') ? `새 버전으로 업데이트됨 (v${V})` : '';
     if (msg) setTimeout(() => toast(msg, 3500), 400);
   } catch (e) {}
-  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, big3Targets400, scaleThreeTo400, liftBest };
+  window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, big3Targets400, scaleThreeTo400, liftBest, big3Series };
 })();
 
 /* ================= 심플다이어트 ================= */
