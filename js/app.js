@@ -1491,7 +1491,7 @@ async function importJsonFile(file) {
     derive(); render(); toast('복원 완료');
   } catch (e) { toast('복원 실패: ' + e.message, 4000); }
 }
-function stamp() { const d = new Date(); return `${d.getFullYear()}${numPad(d.getMonth() + 1)}${numPad(d.getDate())}`; }
+function stamp() { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`; }
 function clean(w) { return JSON.parse(JSON.stringify(w, (k, v) => k.startsWith('_') ? undefined : v)); }
 function editWorkout(id) {
   const w = S.workouts.find(x => x.id === id); if (!w) return;
@@ -1551,7 +1551,7 @@ document.addEventListener('click', e => {
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
         <div class="field"><label>체중 (${S.settings.unit})</label><input class="bwv" inputmode="decimal" type="number" step="0.1" value="${lastBw ? nfmt(toU(lastBw.kg)) : ''}"></div>
         <div class="field"><label>날짜</label><input class="bwd" type="date" value="${dayKey(new Date())}"></div>`, { bottom: true });
-      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${numPad(now.getHours())}:${numPad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
+      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${pad(now.getHours())}:${pad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
       break;
     }
     case 'bw-list': {
@@ -1694,7 +1694,7 @@ function sdCardHtml() {
   <label class="btn light" style="margin-bottom:12px">심플다이어트 CSV 가져오기<input type="file" accept=".csv,text/csv,text/plain" class="f-sdcsv" hidden></label>
   <div class="bold" style="margin-bottom:4px">심플다이어트 연동 (읽기 전용 자동 동기화)</div>
   <div class="muted tiny" style="line-height:1.5;margin-bottom:8px">심플다이어트가 동기화하는 GitHub 저장소 <b>uhyun6907-boop/sd-data</b>의 records.json을 읽어와요. 이 앱은 sd-data에 절대 쓰지 않아요.<br>심플다이어트에 넣은 토큰을 그대로 붙여넣어도 되고, <b>sd-data 저장소에 Contents 읽기(Read-only) 권한만 있는 fine-grained 토큰</b>이면 충분해요. 토큰은 이 기기에만 저장돼요 (백업 파일에도 안 들어가요).</div>
-  ${z.token ? `<div class="list-row"><span>상태</span><span class="small" style="text-align:right">${z.err ? `<span style="color:var(--red)">${esc(z.err)}</span>` : last ? `✅ ${fmtShort(last)} ${numPad(last.getHours())}:${numPad(last.getMinutes())} · ${(z.count || 0).toLocaleString('ko-KR')}개` : '아직 동기화 안 함'}</span></div>
+  ${z.token ? `<div class="list-row"><span>상태</span><span class="small" style="text-align:right">${z.err ? `<span style="color:var(--red)">${esc(z.err)}</span>` : last ? `✅ ${fmtShort(last)} ${pad(last.getHours())}:${pad(last.getMinutes())} · ${(z.count || 0).toLocaleString('ko-KR')}개` : '아직 동기화 안 함'}</span></div>
     ${z.lastMsg ? `<div class="muted tiny" style="margin:-4px 0 8px;text-align:right">${esc(z.lastMsg)}</div>` : ''}
     <button class="btn" data-sd="sync" style="margin-bottom:8px">${sdBusy ? '동기화 중…' : '지금 동기화'}</button>
     <button class="btn gray" data-sd="off">연동 해제 (토큰 삭제)</button>`
