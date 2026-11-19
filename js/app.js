@@ -1,5 +1,4 @@
 'use strict';
-/* ================= storage (IndexedDB) ================= */
 const DBNAME = 'workout-app-db';
 let _db;
 function idb() {
@@ -14,8 +13,8 @@ function idb() {
 async function dbGet(k) { const d = await idb(); return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 async function dbSet(k, v) { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
 const KEYS = ['workouts', 'templates', 'customEx', 'bw', 'settings', 'active', 'sdsync'];
-const DEFAULT_SETTINGS = { unit: 'kg', goal: 6, rest: 120, bwSrc: 'pm', name: '나', exUnit: {}, dash: ['Squat (Barbell)', 'Bench Press (Barbell)', 'Deadlift (Barbell)', 'Sumo Deadlift (Barbell)', 'Overhead Press (Barbell)'] };
-const S = { workouts: [], templates: [], customEx: [], bw: [], settings: { ...DEFAULT_SETTINGS }, active: null, sdsync: { token: '', last: 0, count: 0, err: '' } };
+const defaultSettings = () => ({ unit: 'kg', goal: 6, rest: 120, bwSrc: 'pm', name: '나', exUnit: {}, dash: ['Squat (Barbell)', 'Bench Press (Barbell)', 'Deadlift (Barbell)', 'Sumo Deadlift (Barbell)', 'Overhead Press (Barbell)'] });
+const S = { workouts: [], templates: [], customEx: [], bw: [], settings: defaultSettings(), active: null, sdsync: { token: '', last: 0, count: 0, err: '' } };
 const saveTimers = {};
 function save(k, now) {
   clearTimeout(saveTimers[k]);
@@ -23,9 +22,17 @@ function save(k, now) {
   if (now) return f();
   saveTimers[k] = setTimeout(f, 300);
 }
+const hasDerivedKey = o => Object.keys(o).some(k => k.startsWith('_'));
+function withoutDerived(o) { return Object.fromEntries(Object.entries(o).filter(([k]) => !k.startsWith('_'))); }
+function normalizeLoaded() {
+  S.settings = { ...defaultSettings(), ...S.settings };
+  const hadDerived = S.workouts.some(w => hasDerivedKey(w) || w.exercises.some(hasDerivedKey));
+  if (hadDerived) S.workouts = S.workouts.map(w => ({ ...withoutDerived(w), exercises: w.exercises.map(withoutDerived) }));
+  return hadDerived;
+}
 async function loadAll() {
   for (const k of KEYS) { const v = await dbGet(k); if (v !== undefined) S[k] = v; }
-  S.settings = { ...DEFAULT_SETTINGS, ...S.settings };
+  if (normalizeLoaded()) await save('workouts', true);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
@@ -36,7 +43,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const LB = StrongCSV.LB;
 const WD = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const pad = n => String(n).padStart(2, '0');
+const { pad, slotOfHour } = SD;
 function pd(s) { const m = /(\d+)-(\d+)-(\d+)T?(\d+)?:?(\d+)?:?(\d+)?/.exec(s); return new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)); }
 function isoLocal(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
 function dayKey(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
@@ -80,8 +87,7 @@ const ICON = {
   person: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c.6-4.6 4-7 8.5-7s7.9 2.4 8.5 7z"/></svg>',
 };
 
-/* ================= derived data ================= */
-let D = { byStart: [], exHist: {}, exMap: {}, best: {} };
+let D = { byStart: [], exHist: {}, exMap: {}, best: {}, stats: new Map() };
 function exInfo(name) {
   return D.exMap[name] || { name, body: EXDB.guessBody(name), cat: EXDB.guessCategory(name, EXDB.guessBody(name)) };
 }
@@ -89,22 +95,20 @@ function derive() {
   const asc = [...S.workouts].sort((a, b) => a.start < b.start ? -1 : 1);
   const exHist = {};
   const best = {};
+  const stats = new Map();
   for (const w of asc) {
-    let prs = 0;
-    const date = pd(w.start);
-    w._vol = 0;
+    const st = { date: pd(w.start), vol: 0, prs: 0, exs: [] };
     for (const ex of w.exercises) {
       const b = best[ex.name] || (best[ex.name] = { rm: 0, w: 0, vol: 0, reps: 0, seen: false });
       let sRm = 0, sW = 0, sVol = 0, sReps = 0, bestSet = null, bestScore = -1;
       for (const s of ex.sets) {
-        const v = (s.w || 0) * (s.r || 0); w._vol += v;
+        const v = (s.w || 0) * (s.r || 0); st.vol += v;
         const rm = e1rm(s.w, s.r);
         if (rm > sRm) sRm = rm; if ((s.w || 0) > sW) sW = s.w || 0; if (v > sVol) sVol = v; if ((s.r || 0) > sReps) sReps = s.r || 0;
         const score = rm || (s.w ? s.w : 0) * 1000 + (s.r || 0) + (s.dist || 0) * 10 + (s.sec || 0) / 100;
         if (score > bestScore && s.type !== 'W') { bestScore = score; bestSet = s; }
       }
       if (!bestSet && ex.sets.length) bestSet = ex.sets[0];
-      ex._best = bestSet;
       let p = 0;
       if (b.seen) {
         if (sRm > b.rm + 1e-9) p++;
@@ -112,20 +116,19 @@ function derive() {
         if (sVol > b.vol + 1e-9) p++;
         if (!sRm && sReps > b.reps) p++;
       }
-      ex._pr = p; prs += p;
+      st.exs.push({ best: bestSet, pr: p }); st.prs += p;
       if (ex.sets.length) {
         b.seen = true; b.rm = Math.max(b.rm, sRm); b.w = Math.max(b.w, sW); b.vol = Math.max(b.vol, sVol); b.reps = Math.max(b.reps, sReps);
       }
-      (exHist[ex.name] || (exHist[ex.name] = [])).push({ w, ex, date, rm: sRm, maxW: sW, vol: sVol, reps: sReps });
+      (exHist[ex.name] || (exHist[ex.name] = [])).push({ w, ex, date: st.date, rm: sRm, maxW: sW, vol: sVol, reps: sReps });
     }
-    w._prs = prs;
-    w._date = date;
+    stats.set(w, st);
   }
   const exMap = {};
   for (const e of EXDB.SEED_LIST) exMap[e.name] = { ...e };
   for (const e of S.customEx) exMap[e.name] = { ...e, custom: true };
   for (const n in exHist) if (!exMap[n]) { const body = EXDB.guessBody(n); exMap[n] = { name: n, body, cat: EXDB.guessCategory(n, body), imported: true }; }
-  D = { byStart: asc.slice().reverse(), exHist, exMap, best };
+  D = { byStart: asc.slice().reverse(), exHist, exMap, best, stats };
 }
 function lastPerformance(name, excludeId) {
   const h = D.exHist[name]; if (!h) return null;
@@ -187,7 +190,6 @@ const ChartTip = (() => {
   return { clear };
 })();
 const numFmt = v => (Math.round(v * 10) / 10).toLocaleString('ko-KR', { maximumFractionDigits: 1 });
-const ymdDot = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const tipAttr = (pts, b) => ` data-tip="${esc(JSON.stringify(pts))}" data-b="${b.join(',')}"`;
 function barChart(vals, labels, goal, tips) {
   const W = 340, H = 170, L = 6, R = 34, T = 10, B = 24;
@@ -218,7 +220,7 @@ function lineChart(pts, opts = {}) {
   let y0 = Math.min(...ys), y1 = Math.max(...ys); const padY = Math.max((y1 - y0) * 0.12, 1); y0 = Math.max(0, y0 - padY); y1 = y1 + padY;
   const X = x => L + (W - L - R) * (x - x0) / (x1 - x0), Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
   const u0 = opts.unit || '';
-  const tp = pts.map(p => [+X(+p.x).toFixed(1), +Y(p.y).toFixed(1), `${ymdDot(new Date(+p.x))} · ${numFmt(opts.round ? Math.round(p.y / opts.round) * opts.round : p.y)}${u0 === '렙' ? '렙' : u0 ? ' ' + u0 : ''}`]);
+  const tp = pts.map(p => [+X(+p.x).toFixed(1), +Y(p.y).toFixed(1), `${dayKey(new Date(+p.x))} · ${numFmt(opts.round ? Math.round(p.y / opts.round) * opts.round : p.y)}${u0 === '렙' ? '렙' : u0 ? ' ' + u0 : ''}`]);
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}"${tipAttr(tp, [L, T, W - R, H - B])}>`;
   for (let i = 0; i <= 3; i++) { const yy = T + (H - T - B) * i / 3; s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#F0F0F0"/>`; }
   const span = x1 - x0, nl = 4;
@@ -279,7 +281,7 @@ function renderProfile(v) {
   const weeks = []; for (let i = 7; i >= 0; i--) { const d = new Date(ws0); d.setDate(d.getDate() - 7 * i); weeks.push(d); }
   // count distinct workout DAYS (local date) per week; 2 workouts on one day = 1
   const daySets = weeks.map(() => new Set());
-  for (const w of S.workouts) { const d = w._date || pd(w.start); const idx = Math.round((weekStart(d) - weeks[0]) / (7 * 864e5)); if (idx >= 0 && idx < 8) daySets[idx].add(dayKey(d)); }
+  for (const w of S.workouts) { const d = D.stats.get(w).date; const idx = Math.round((weekStart(d) - weeks[0]) / (7 * 864e5)); if (idx >= 0 && idx < 8) daySets[idx].add(dayKey(d)); }
   const counts = daySets.map(x => x.size);
   const labels = weeks.map(d => `${d.getMonth() + 1}.${d.getDate()}.`);
   const bwFrom = rangeFrom('bw');
@@ -295,7 +297,7 @@ function renderProfile(v) {
   <div class="card">
     <div class="between"><div><h3>주당 워크아웃</h3><div class="sub">최근 8주 · 운동한 날 수 · 목표 주 ${S.settings.goal}일</div></div>
       <button class="pill" data-act="goal">◎ 목표</button></div>
-    <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal, weeks.map((d, i) => `${ymdDot(d)} 주 · ${counts[i]}일 운동`))}</div>
+    <div style="margin-top:10px">${barChart(counts, labels, S.settings.goal, weeks.map((d, i) => `${dayKey(d)} 주 · ${counts[i]}일 운동`))}</div>
   </div>
   <div class="card">
     <div class="between"><div><h3>체중</h3><div class="sub">${lastBw ? '최근 ' + fmtW(lastBw.kg) + ' · ' + fmtShort(pd(lastBw.date)) + ' ' + lastBw.date.slice(11, 16) : '기록 없음 · 설정에서 심플다이어트 연동'}</div></div>
@@ -312,25 +314,30 @@ function renderProfile(v) {
     const cur = recent.length ? recent.reduce((a, d) => d.rm > a.rm ? d : a) : lastD;
     const bestD = all.length ? all.reduce((a, d) => d.rm > a.rm ? d : a) : null;
     const goal = t400 && t400.byName[name];
-    return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (세션별 추정 1RM)${goal ? ` · <span style="color:var(--blue)">400 목표 ${nfmt(goal)}</span>` : ''}</div></div>
+    return `<div class="card"><div class="between" style="align-items:flex-start"><div><h3>${esc(name)}</h3><div class="sub">PR 진행 상황 (세션별 추정 1RM)${goal ? ` · <span style="color:var(--blue)">400 목표 ${nfmt(r05u(goal, name))}</span>` : ''}</div></div>
       <button class="dots" data-act="ex-detail" data-name="${esc(name)}">•••</button></div>
       ${cur ? `<div style="margin-top:8px"><span class="muted small bold">현재 1RM 추정</span> <span style="font-size:26px;font-weight:800;color:var(--purple)">${fmtRm(cur.rm, name)}</span>
         <div class="muted tiny">${recent.length ? '최근 3개월 최고' : '마지막 기록'} · ${fmtShort(cur.date)}${bestD ? ` &nbsp;|&nbsp; 역대 최고 ${fmtRm(bestD.rm, name)} (${fmtShort(bestD.date)})` : ''}</div></div>` : ''}
-      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), round: 0.5, from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null, target: goal || null })}</div>${rangeBtns(name)}</div>`;
+      <div style="margin-top:6px">${lineChart(pts, { unit: unitOf(name), round: 0.5, from: from || undefined, ref: b && b.rm ? toU(b.rm, name) : null, target: goal ? toU(goal, name) : null })}</div>${rangeBtns(name)}</div>`;
   }).join(''); })()}
   <button class="btn light" data-act="dash-edit" style="margin-bottom:10px">＋ 차트 운동 추가</button>
   ${n === 0 ? `<div class="card empty">아직 기록이 없어요.<br>설정에서 Strong CSV를 가져오거나<br>워크아웃을 시작해보세요.<br><br><button class="btn" data-act="settings">CSV 가져오기</button></div>` : ''}`;
 }
 
-/* ================= 3대 ================= */
-function liftBest(name) {
-  const all = dailyRm(name, 0); const cutoff = Date.now() - 92 * 864e5;
+const SQUAT = 'Squat (Barbell)', BENCH = 'Bench Press (Barbell)', DEAD = 'Deadlift (Barbell)', SUMO = 'Sumo Deadlift (Barbell)';
+const CUR_WINDOW = 92 * 864e5;
+function liftBest(name, at = Date.now()) {
   let cur = 0, best = 0;
-  for (const d of all) { if (d.rm > best) best = d.rm; if (+d.date >= cutoff && d.rm > cur) cur = d.rm; }
-  return { cur, best };
+  for (const d of dailyRm(name, 0)) { if (+d.date > at) break; if (d.rm > best) best = d.rm; if (+d.date >= at - CUR_WINDOW && d.rm > cur) cur = d.rm; }
+  const logged = (D.exHist[name] || []).filter(x => x.ex.sets.length && +x.date <= at);
+  return { cur, best, lastDay: logged.length ? dayKey(logged[logged.length - 1].date) : '' };
 }
-// Round display kg/lb to 0.5 (same as 3대 card).
-function r05u(kg) { return Math.round(toU(kg) * 2) / 2; }
+function deadliftAt(at = Date.now()) {
+  const dl = { name: DEAD, label: '데드', ...liftBest(DEAD, at) }, su = { name: SUMO, label: '데드(스모)', ...liftBest(SUMO, at) };
+  if (su.lastDay !== dl.lastDay) return su.lastDay > dl.lastDay ? su : dl;
+  return su.cur > dl.cur ? su : dl;
+}
+function r05u(kg, ex) { return Math.round(toU(kg, ex) * 2) / 2; }
 /** Scale three positive numbers so they sum to exactly 400, each on a 0.5 grid. */
 function scaleThreeTo400(a, b, c) {
   const sum = a + b + c;
@@ -347,37 +354,25 @@ function scaleThreeTo400(a, b, c) {
   }
   return out;
 }
-/** Personal 400-total targets from last-3-month e1RMs (squat / bench / best dead). Recomputed from IndexedDB. */
 function big3Targets400() {
-  const sq = liftBest('Squat (Barbell)'), bp = liftBest('Bench Press (Barbell)');
-  const dl = liftBest('Deadlift (Barbell)'), su = liftBest('Sumo Deadlift (Barbell)');
-  const deadIsSumo = su.cur > dl.cur;
-  const deadCur = deadIsSumo ? su.cur : dl.cur;
-  const deadName = deadIsSumo ? 'Sumo Deadlift (Barbell)' : 'Deadlift (Barbell)';
-  if (!sq.cur && !bp.cur && !deadCur) return null;
-  const parts = scaleThreeTo400(r05u(sq.cur), r05u(bp.cur), r05u(deadCur));
+  const sq = liftBest(SQUAT), bp = liftBest(BENCH), dead = deadliftAt();
+  const parts = scaleThreeTo400(sq.cur, bp.cur, dead.cur);
   if (!parts) return null;
   return {
     squat: parts[0], bench: parts[1], dead: parts[2],
-    deadName, deadIsSumo, deadLabel: deadIsSumo ? '데드(스모)' : '데드',
-    raw: { squat: r05u(sq.cur), bench: r05u(bp.cur), dead: r05u(deadCur) },
-    byName: {
-      'Squat (Barbell)': parts[0],
-      'Bench Press (Barbell)': parts[1],
-      [deadName]: parts[2],
-    },
+    deadName: dead.name, deadIsSumo: dead.name === SUMO, deadLabel: dead.label,
+    raw: { squat: sq.cur, bench: bp.cur, dead: dead.cur },
+    byName: { [SQUAT]: parts[0], [BENCH]: parts[1], [dead.name]: parts[2] },
   };
 }
 function big3Series() {
-  const W = 92 * 864e5;
-  const L = [dailyRm('Squat (Barbell)', 0), dailyRm('Bench Press (Barbell)', 0), dailyRm('Deadlift (Barbell)', 0).concat(dailyRm('Sumo Deadlift (Barbell)', 0))];
-  const days = [...new Set(L.flat().map(d => dayKey(d.date)))].sort();
+  const days = [...new Set([SQUAT, BENCH, DEAD, SUMO].flatMap(n => dailyRm(n, 0).map(d => dayKey(d.date))))].sort();
   const out = [];
   for (const k of days) {
-    const t = pd(k + 'T23:59:59');
-    const best = L.map(arr => arr.reduce((m, d) => (+d.date <= +t && +d.date > +t - W && d.rm > m ? d.rm : m), 0));
-    if (best.some(v => !v)) continue;
-    out.push({ x: pd(k + 'T12:00:00'), y: best.reduce((a, v) => a + r05u(v), 0) });
+    const t = +pd(k + 'T23:59:59');
+    const cur = [liftBest(SQUAT, t).cur, liftBest(BENCH, t).cur, deadliftAt(t).cur];
+    if (cur.some(v => !v)) continue;
+    out.push({ x: pd(k + 'T12:00:00'), y: cur.reduce((a, v) => a + r05u(v), 0) });
   }
   return out;
 }
@@ -392,21 +387,18 @@ function big3ChartCard() {
 }
 function big3Card() {
   const u = S.settings.unit;
-  const sq = liftBest('Squat (Barbell)'), bp = liftBest('Bench Press (Barbell)');
-  const dl = liftBest('Deadlift (Barbell)'), su = liftBest('Sumo Deadlift (Barbell)');
-  if (!sq.best && !bp.best && !dl.best && !su.best) return '';
-  const pick = k => (su[k] > dl[k] ? { v: su[k], lab: '데드(스모)' } : { v: dl[k], lab: '데드' });
-  const dCur = pick('cur'), dBest = pick('best');
+  const sq = liftBest(SQUAT), bp = liftBest(BENCH), dead = deadliftAt();
+  if (!sq.best && !bp.best && !dead.best) return '';
   const part = (lab, v) => `<span>${lab} <b>${v ? nfmt(r05u(v)) : '–'}</b></span>`;
   const tot = (a, b, c) => nfmt(r05u(a) + r05u(b) + r05u(c));
   const t400 = big3Targets400();
   const goalRow = t400 ? `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #DDD3F3">
-      <div class="between" style="align-items:baseline"><div class="muted small bold">400 ${esc(u)} 목표 <span class="tiny">(내 3대 비율)</span></div>
-        <span class="muted tiny">합 ${nfmt(t400.squat + t400.bench + t400.dead)}</span></div>
+      <div class="between" style="align-items:baseline"><div class="muted small bold">${nfmt(r05u(400))} ${esc(u)} 목표 <span class="tiny">(내 3대 비율)</span></div>
+        <span class="muted tiny">합 ${nfmt(r05u(t400.squat + t400.bench + t400.dead))}</span></div>
       <div style="display:flex;gap:10px;margin-top:6px;font-size:14px;font-weight:700;color:#333;flex-wrap:wrap">
-        <span>스쿼트 <b style="color:var(--blue)">${nfmt(t400.squat)}</b></span>
-        <span>벤치 <b style="color:var(--blue)">${nfmt(t400.bench)}</b></span>
-        <span>${esc(t400.deadLabel)} <b style="color:var(--blue)">${nfmt(t400.dead)}</b></span>
+        <span>스쿼트 <b style="color:var(--blue)">${nfmt(r05u(t400.squat))}</b></span>
+        <span>벤치 <b style="color:var(--blue)">${nfmt(r05u(t400.bench))}</b></span>
+        <span>${esc(t400.deadLabel)} <b style="color:var(--blue)">${nfmt(r05u(t400.dead))}</b></span>
       </div>
       <div class="muted tiny" style="margin-top:4px">차트 파란 점선 = 이 목표 · 기기 기록으로 매번 다시 계산</div>
     </div>` : '';
@@ -414,24 +406,24 @@ function big3Card() {
     <div class="between"><h3>3대 (추정 1RM 합계)</h3><span class="muted tiny">스쿼트+벤치+데드</span></div>
     <div style="display:flex;gap:12px;margin-top:10px">
       <div style="flex:1"><div class="muted small bold">현재 <span class="tiny">(최근 3개월)</span></div>
-        <div style="font-size:34px;font-weight:800;color:var(--purple);line-height:1.15">${tot(sq.cur, bp.cur, dCur.v)}<span style="font-size:16px"> ${u}</span></div>
-        <div class="muted tiny" style="display:flex;flex-direction:column;gap:1px;margin-top:4px">${part('스쿼트', sq.cur)}${part('벤치', bp.cur)}${part(dCur.lab, dCur.v)}</div></div>
+        <div style="font-size:34px;font-weight:800;color:var(--purple);line-height:1.15">${tot(sq.cur, bp.cur, dead.cur)}<span style="font-size:16px"> ${u}</span></div>
+        <div class="muted tiny" style="display:flex;flex-direction:column;gap:1px;margin-top:4px">${part('스쿼트', sq.cur)}${part('벤치', bp.cur)}${part(dead.label, dead.cur)}</div></div>
       <div style="flex:1;border-left:1px solid #DDD3F3;padding-left:12px"><div class="muted small bold">역대 최고</div>
-        <div style="font-size:34px;font-weight:800;color:#333;line-height:1.15">${tot(sq.best, bp.best, dBest.v)}<span style="font-size:16px"> ${u}</span></div>
-        <div class="muted tiny" style="display:flex;flex-direction:column;gap:1px;margin-top:4px">${part('스쿼트', sq.best)}${part('벤치', bp.best)}${part(dBest.lab, dBest.v)}</div></div>
+        <div style="font-size:34px;font-weight:800;color:#333;line-height:1.15">${tot(sq.best, bp.best, dead.best)}<span style="font-size:16px"> ${u}</span></div>
+        <div class="muted tiny" style="display:flex;flex-direction:column;gap:1px;margin-top:4px">${part('스쿼트', sq.best)}${part('벤치', bp.best)}${part(dead.label, dead.best)}</div></div>
     </div>${goalRow}</div>`;
 }
 
 /* ================= history ================= */
 let histMode = 'list', calMonth = null, calSel = null, histLimit = 40;
 function workoutCard(w) {
-  const d = w._date || pd(w.start);
+  const st = D.stats.get(w), d = st.date;
   return `<div class="card" data-act="w-detail" data-id="${w.id}">
     <div class="between"><h3 style="font-size:17px">${esc(w.name)}</h3><button class="dots" data-act="w-menu" data-id="${w.id}">•••</button></div>
     <div class="sub" style="font-weight:600;color:#555">${fmtDateK(d, d.getFullYear() !== new Date().getFullYear())}</div>
-    <div class="stat-row"><span>${ICON.clock}${fmtDur(w.duration)}</span><span>${ICON.weight}${fmtVol(w._vol || 0)}</span><span>${ICON.trophy}${w._prs || 0} PR</span></div>
+    <div class="stat-row"><span>${ICON.clock}${fmtDur(w.duration)}</span><span>${ICON.weight}${fmtVol(st.vol)}</span><span>${ICON.trophy}${st.prs} PR</span></div>
     <div class="ex-grid"><div class="h">운동</div><div class="h">최고 세트</div>
-    ${w.exercises.map(e => `<div>${e.sets.length} × ${esc(e.name)}</div><div>${e._best ? esc(setLabel(e._best, e.name)) : ''}${e._pr ? ' <span class="pr-badge">🏆</span>' : ''}</div>`).join('')}</div>
+    ${w.exercises.map((e, i) => `<div>${e.sets.length} × ${esc(e.name)}</div><div>${st.exs[i].best ? esc(setLabel(st.exs[i].best, e.name)) : ''}${st.exs[i].pr ? ' <span class="pr-badge">🏆</span>' : ''}</div>`).join('')}</div>
   </div>`;
 }
 function renderHistory(v) {
@@ -442,7 +434,7 @@ function renderHistory(v) {
   let lastM = '', i = 0;
   for (const w of list) {
     if (i >= histLimit) break;
-    const d = w._date; const m = `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
+    const d = D.stats.get(w).date; const m = `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
     if (m !== lastM) { html += `<div class="month-h">${m}</div>`; lastM = m; }
     html += workoutCard(w); i++;
   }
@@ -460,7 +452,7 @@ function calendarHtml() {
   const y = calMonth.getFullYear(), m = calMonth.getMonth();
   const days = new Date(y, m + 1, 0).getDate(), first = new Date(y, m, 1).getDay();
   const byDay = {};
-  for (const w of S.workouts) { const k = dayKey(w._date); (byDay[k] || (byDay[k] = [])).push(w); }
+  for (const w of S.workouts) { const k = dayKey(D.stats.get(w).date); (byDay[k] || (byDay[k] = [])).push(w); }
   let monthCount = 0;
   let cells = ['일', '월', '화', '수', '목', '금', '토'].map(x => `<div class="dow">${x}</div>`).join('');
   for (let i = 0; i < first; i++) cells += '<div></div>';
@@ -475,12 +467,12 @@ function calendarHtml() {
 }
 function workoutDetail(id) {
   const w = S.workouts.find(x => x.id === id); if (!w) return;
-  const d = w._date;
+  const st = D.stats.get(w), d = st.date;
   openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>${esc(w.name)}</h2><button class="dots" data-act="w-menu" data-id="${w.id}">•••</button></div>
   <div class="muted small bold">${fmtDateK(d, true)} · ${pad(d.getHours())}:${pad(d.getMinutes())}</div>
-  <div class="stat-row"><span>${ICON.clock}${fmtDur(w.duration)}</span><span>${ICON.weight}${fmtVol(w._vol || 0)}</span><span>${ICON.trophy}${w._prs || 0} PR</span></div>
+  <div class="stat-row"><span>${ICON.clock}${fmtDur(w.duration)}</span><span>${ICON.weight}${fmtVol(st.vol)}</span><span>${ICON.trophy}${st.prs} PR</span></div>
   ${w.note ? `<div class="card small" style="background:#fafafa">${esc(w.note)}</div>` : ''}
-  ${w.exercises.map(e => `<div style="margin:14px 0 4px"><button class="bold" style="color:var(--blue)" data-act="ex-detail" data-name="${esc(e.name)}">${esc(e.name)}</button>${e._pr ? '<span class="chip pr">🏆 PR</span>' : ''}${e.note ? `<div class="muted small">${esc(e.note)}</div>` : ''}</div>
+  ${w.exercises.map((e, ei) => `<div style="margin:14px 0 4px"><button class="bold" style="color:var(--blue)" data-act="ex-detail" data-name="${esc(e.name)}">${esc(e.name)}</button>${st.exs[ei].pr ? '<span class="chip pr">🏆 PR</span>' : ''}${e.note ? `<div class="muted small">${esc(e.note)}</div>` : ''}</div>
     ${e.sets.map((s, i) => `<div class="hist-set"><span class="i">${s.type !== 'n' ? `<span class="stype ${s.type}">${s.type}</span>` : i + 1}</span><span>${esc(setLabel(s, e.name))}</span>${s.rpe ? `<span class="muted small">RPE ${s.rpe}</span>` : ''}<span class="muted small" style="margin-left:auto">${e1rm(s.w, s.r) ? '1RM ' + nfmt(Math.round(toU(e1rm(s.w, s.r), e.name))) : ''}</span></div>`).join('')}`).join('')}
   <div style="height:14px"></div><button class="btn" data-act="w-repeat" data-id="${w.id}">이 워크아웃 다시 하기</button>`, { bottom: true });
 }
@@ -496,7 +488,7 @@ function workoutMenu(id) {
 /* ================= start / templates ================= */
 function tplLast(t) {
   let last = t.lastUsed ? pd(t.lastUsed) : null;
-  for (const w of D.byStart) { if (w.name === t.name) { const d = w._date; if (!last || d > last) last = d; break; } }
+  for (const w of D.byStart) { if (w.name === t.name) { const d = D.stats.get(w).date; if (!last || d > last) last = d; break; } }
   return last;
 }
 function renderStart(v) {
@@ -806,7 +798,7 @@ function drawActive() {
           <input readonly inputmode="none" autocomplete="off" data-f="r" data-pad="r" value="${s.r === '' ? '' : nfmt(s.r)}" placeholder="${ph && ph.r ? nfmt(ph.r) : ''}">
           <button class="check" data-a="check" ${s.rpe ? `title="RPE ${s.rpe}"` : ''}>${ICON.check}${s.rpe ? `<span class="rpe-dot">${s.rpe}</span>` : ''}</button>
         </div></div></div>
-        <div class="rest-row ${s.done ? 'past' : ''}" data-rei="${ei}" data-rsi="${si}"><div class="rest-line"><i></i><button class="rest-time" data-a="restedit">${fmtClock(setRest(e, s))}</button></div></div>`;
+        <div class="rest-row ${s.done ? 'past' : ''}" data-rei="${ei}" data-rsi="${si}"><div class="rest-line"><i></i><button class="rest-time" data-a="restedit">${fmtClock(restSec(e, s))}</button></div></div>`;
       }).join('')}
       <button class="btn gray" style="padding:8px;font-size:15px;margin-top:4px" data-a="addset" data-ei="${ei}">＋ 세트 추가</button></div>`;
     }).join('')}
@@ -851,7 +843,7 @@ function activeClick(e) {
       s.done = true;
       // always auto-start rest between sets; skip only when this was the last open set of the whole workout
       const allDone = A.exercises.every(x => x.sets.every(z => z.done));
-      if (!allDone) { startRest(setRest(ex, s)); restTimer.ex = ex.name; restTimer.ei = ei; restTimer.si = si; } else { restTimer = null; }
+      if (!allDone) { startRest(restSec(ex, s)); restTimer.ei = ei; restTimer.si = si; } else { restTimer = null; }
     } else {
       s.done = false;
       // unchecking the set that started the current rest → cancel it (no beep/toast)
@@ -864,14 +856,6 @@ function activeClick(e) {
   if (a === 'addset') { const last = ex.sets[ex.sets.length - 1]; ex.sets.push({ w: '', r: '', type: 'n', done: false, pw: last ? (last.w === '' ? last.pw : last.w) : 0, pr: last ? (last.r === '' ? last.pr : last.r) : 0 }); save('active'); drawActive(); return; }
   if (a === 'addex') { pickExercise(names => { for (const n of names) { const lp = lastPerformance(n); const sets = lp ? lp.ex.sets.map(s => ({ w: '', r: '', type: s.type, done: false })) : [{ w: '', r: '', type: 'n', done: false }]; A.exercises.push({ name: n, sets, rest: lastRestOf(n) || undefined }); } save('active'); drawActive(); }); return; }
   if (a === 'exinfo') { exDetail(ex.name, true); return; }
-  if (a === 'restpick') {
-    pickRest(`${ex.name} 휴식 시간`, restFor(ex), t => {
-      ex.rest = t; S.settings.exRest = { ...(S.settings.exRest || {}), [ex.name]: t }; save('settings'); save('active');
-      if (restTimer && restTimer.ex === ex.name) { restTimer.end = Date.now() + t * 1000; restTimer.total = t; }
-      drawActive(); toast(`${ex.name}: 휴식 ${fmtClock(t)} (다음 워크아웃에도 적용)`);
-    }, '이 운동의 기본 휴식 시간으로 저장돼요');
-    return;
-  }
   if (a === 'rt-set') { if (!restTimer) return; const left = Math.max(30, Math.round((restTimer.end - Date.now()) / 15000) * 15); pickRest('남은 휴식 시간 설정', left, t => { if (restTimer) { restTimer.end = Date.now() + t * 1000; restTimer.total = t; drawTimer(); } }); return; }
   if (a === 'exmenu') {
     const ei = +b.dataset.ei;
@@ -907,20 +891,14 @@ function activeClick(e) {
   if (a === 'rt-plus') { if (restTimer) { restTimer.end += 15000; restTimer.total += 15; } drawTimer(); return; }
   if (a === 'rt-skip') { restTimer = null; drawTimer(); updateBanner(); return; }
 }
-const DEFAULT_REST = 120;
-// per-exercise rest (this workout) > last rest used for this exercise in history (incl. Strong 휴식 타이머 rows) > default
 function lastRestOf(name) { const h = D.exHist[name] || []; for (let i = h.length - 1; i >= 0; i--) if (h[i].ex.rest > 0) return h[i].ex.rest; return 0; }
-function savedRest(name) { const m = S.settings.exRest || {}; return m[name] > 0 ? m[name] : 0; }
-function restFor(ex) { return (ex.rest > 0 ? ex.rest : 0) || savedRest(ex.name) || lastRestOf(ex.name) || (S.settings.rest > 0 ? S.settings.rest : DEFAULT_REST); }
-// picker: 0:30 – 5:00 in 15s steps
-function pickRest(title, cur, cb, note) {
+function restSec(ex, s) { return s.rest || ex.rest || lastRestOf(ex.name) || (S.settings.exRest || {})[ex.name] || S.settings.rest; }
+function pickRest(title, cur, cb) {
   const opts = []; for (let t = 30; t <= 300; t += 15) opts.push(t);
   const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2 style="font-size:16px">${esc(title)}</h2><span style="width:34px"></span></div>
-    ${note ? `<div class="muted tiny" style="text-align:center;margin-bottom:8px">${esc(note)}</div>` : ''}
     <div class="rest-grid">${opts.map(t => `<button class="${t === cur ? 'on' : ''}" data-rt="${t}">${fmtClock(t)}</button>`).join('')}</div>`, { bottom: true, nested: true });
   m.addEventListener('click', e => { const b = e.target.closest('[data-rt]'); if (!b) return; closeTopModal(); cb(+b.dataset.rt); });
 }
-function setRest(ex, s) { return s && s.rest > 0 ? s.rest : restFor(ex); }
 // keypad digits -> seconds: last two digits = seconds ("200"=2:00, "130"=1:30, "45"=0:45, "1000"=10:00, "90"=1:30)
 function digitsToSec(d) { d = String(d || '').replace(/\D/g, '').slice(-4); if (!d) return 0; const n = +d; return Math.floor(n / 100) * 60 + (n % 100); }
 function editRestInline(btn, ei, si) {
@@ -1035,12 +1013,7 @@ function openNumpad(opts) {
   let text = '';
   if (mode === 'w') text = s.w === '' ? '' : nfmt(toU(s.w, A.exercises[ei].name));
   else if (mode === 'r') text = s.r === '' ? '' : nfmt(s.r);
-  else {
-    const cur = setRest(A.exercises[ei], s);
-    text = '';
-    // show current as placeholder via highlight only
-  }
-  numPad = { mode, ei, si, fresh: true, text: mode === 'time' ? '' : text };
+  numPad = { mode, ei, si, fresh: true, text };
   const sheet = $('#activeSheet'); if (sheet) sheet.classList.add('pad-open');
   $('#numpadScrim').classList.add('on');
   const np = $('#numpad'); np.classList.add('on'); np.setAttribute('aria-hidden', 'false');
@@ -1092,7 +1065,7 @@ function syncPadDisplay() {
   const A = S.active, ex = A.exercises[numPad.ei], s = ex.sets[numPad.si];
   if (numPad.mode === 'time') {
     const btn = $(`#activeSheet .rest-row[data-rei="${numPad.ei}"][data-rsi="${numPad.si}"] .rest-time`);
-    if (btn) btn.textContent = numPad.text ? fmtClock(Math.min(3600, digitsToSec(numPad.text))) : fmtClock(setRest(ex, s));
+    if (btn) btn.textContent = numPad.text ? fmtClock(Math.min(3600, digitsToSec(numPad.text))) : fmtClock(restSec(ex, s));
     return;
   }
   const inp = $(`#activeSheet .swipe-row[data-ei="${numPad.ei}"][data-si="${numPad.si}"] input[data-pad="${numPad.mode}"]`);
@@ -1216,7 +1189,6 @@ function closeActive() {
 }
 
 function startRest(sec) {
-  sec = sec > 0 ? sec : DEFAULT_REST;
   try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
   restTimer = { end: Date.now() + sec * 1000, total: sec };
 }
@@ -1237,7 +1209,7 @@ function beep() {
 }
 function drawTimer() {
   const tb = $('#timerBar'); if (!tb) return;
-  $$('#activeSheet .rest-row.running').forEach(r => { if (!restTimer || +r.dataset.rei !== restTimer.ei || +r.dataset.rsi !== restTimer.si) { r.classList.remove('running'); const i = r.querySelector('i'); if (i) i.style.width = '0'; const bt = r.querySelector('.rest-time'); const A = S.active; if (bt && A && A.exercises[+r.dataset.rei]) { const ex = A.exercises[+r.dataset.rei]; bt.textContent = fmtClock(setRest(ex, ex.sets[+r.dataset.rsi])); } } });
+  $$('#activeSheet .rest-row.running').forEach(r => { if (!restTimer || +r.dataset.rei !== restTimer.ei || +r.dataset.rsi !== restTimer.si) { r.classList.remove('running'); const i = r.querySelector('i'); if (i) i.style.width = '0'; const bt = r.querySelector('.rest-time'); const A = S.active; if (bt && A && A.exercises[+r.dataset.rei]) { const ex = A.exercises[+r.dataset.rei]; bt.textContent = fmtClock(restSec(ex, ex.sets[+r.dataset.rsi])); } } });
   if (!restTimer) { tb.hidden = true; tb.innerHTML = ''; return; }
   {
     const r = $(`#activeSheet .rest-row[data-rei="${restTimer.ei}"][data-rsi="${restTimer.si}"]`);
@@ -1279,13 +1251,13 @@ function finishWorkout() {
   S.active = null; restTimer = null;
   save('workouts', true); save('active', true);
   derive(); closeActive();
-  const saved = S.workouts.find(x => x.id === w.id);
-  const prEx = saved.exercises.filter(e => e._pr);
+  const st = D.stats.get(w);
+  const prEx = w.exercises.map((e, i) => ({ name: e.name, ...st.exs[i] })).filter(e => e.pr);
   go('history');
   openModal(`<div style="text-align:center;padding:10px 0"><div style="font-size:46px">🎉</div><h2 style="margin:6px 0">수고했어요!</h2>
    <div class="muted">${S.workouts.length.toLocaleString('ko-KR')}번째 워크아웃 완료</div>
-   <div class="stat-row" style="justify-content:center"><span>${ICON.clock}${fmtDur(saved.duration)}</span><span>${ICON.weight}${fmtVol(saved._vol)}</span><span>${ICON.trophy}${saved._prs} PR</span></div>
-   ${prEx.length ? `<div class="card" style="text-align:left">${prEx.map(e => `<div>🏆 <b>${esc(e.name)}</b> <span class="muted small">${esc(setLabel(e._best, e.name))}</span></div>`).join('')}</div>` : ''}
+   <div class="stat-row" style="justify-content:center"><span>${ICON.clock}${fmtDur(w.duration)}</span><span>${ICON.weight}${fmtVol(st.vol)}</span><span>${ICON.trophy}${st.prs} PR</span></div>
+   ${prEx.length ? `<div class="card" style="text-align:left">${prEx.map(e => `<div>🏆 <b>${esc(e.name)}</b> <span class="muted small">${esc(setLabel(e.best, e.name))}</span></div>`).join('')}</div>` : ''}
    <button class="btn" data-close>확인</button></div>`);
 }
 
@@ -1434,11 +1406,11 @@ function renderSettings(v) {
     <div class="list-row"><span>이름</span><input class="s-name" value="${esc(S.settings.name)}" style="border:0;text-align:right;outline:none;font-size:16px;width:50%"></div>
     <div class="list-row"><span>무게 단위</span><div class="seg"><button data-act="unit" data-v="kg" class="${S.settings.unit === 'kg' ? 'on' : ''}">kg</button><button data-act="unit" data-v="lb" class="${S.settings.unit === 'lb' ? 'on' : ''}">lb</button></div></div>
     <div class="list-row"><span>주간 목표 (운동한 날)</span><input class="s-goal" type="number" inputmode="numeric" value="${S.settings.goal}" style="width:70px;text-align:right;border:0;outline:none;font-size:16px"></div>
-    <div class="list-row"><span>기본 휴식 시간<div class="muted tiny">세트 체크하면 자동 시작 · 운동별 시간은 워크아웃 중 ⏱ 칩에서</div></span><button class="rest-chip" data-act="rest-default">⏱ ${fmtClock(S.settings.rest > 0 ? S.settings.rest : DEFAULT_REST)}</button></div>
+    <div class="list-row"><span>기본 휴식 시간<div class="muted tiny">세트 체크하면 자동 시작 · 운동별 시간은 워크아웃 중 세트 아래 휴식 시간을 탭해서</div></span><button class="rest-chip" data-act="rest-default">⏱ ${fmtClock(S.settings.rest)}</button></div>
   </div>
   <div class="section-h">데이터</div>
   <div class="card">
-    <div class="muted small" style="margin-bottom:10px" id="dataSummary">워크아웃 ${nW.toLocaleString('ko-KR')}개 · 세트 ${sets.toLocaleString('ko-KR')}개${first ? ` · ${fmtShort(first._date)} ~ ${fmtShort(last._date)}` : ''}<br>데이터는 이 기기(브라우저)에만 저장돼요. 정기적으로 백업하세요.</div>
+    <div class="muted small" style="margin-bottom:10px" id="dataSummary">워크아웃 ${nW.toLocaleString('ko-KR')}개 · 세트 ${sets.toLocaleString('ko-KR')}개${first ? ` · ${fmtShort(D.stats.get(first).date)} ~ ${fmtShort(D.stats.get(last).date)}` : ''}<br>데이터는 이 기기(브라우저)에만 저장돼요. 정기적으로 백업하세요.</div>
     <label class="btn" style="margin-bottom:8px">Strong CSV 가져오기<input type="file" accept=".csv,text/csv,text/plain" class="f-csv" hidden></label>
     <button class="btn light" data-act="exp-csv" style="margin-bottom:8px">CSV 내보내기 (Strong 형식)</button>
     <button class="btn light" data-act="exp-json" style="margin-bottom:8px">전체 백업 (JSON)</button>
@@ -1486,16 +1458,16 @@ async function importJsonFile(file) {
     const data = JSON.parse(await file.text());
     if (!data || !Array.isArray(data.workouts)) throw new Error('백업 파일이 아니에요');
     if (!confirm(`백업을 복원하면 현재 데이터가 바뀌어요. 워크아웃 ${data.workouts.length}개를 복원할까요?`)) return;
-    for (const k of KEYS) if (k in data && k !== 'active') { S[k] = data[k]; await save(k, true); }
-    S.settings = { ...DEFAULT_SETTINGS, ...S.settings };
+    for (const k of KEYS) if (k in data && k !== 'active') S[k] = data[k];
+    normalizeLoaded();
+    for (const k of KEYS) if (k in data && k !== 'active') await save(k, true);
     derive(); render(); toast('복원 완료');
   } catch (e) { toast('복원 실패: ' + e.message, 4000); }
 }
 function stamp() { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`; }
-function clean(w) { return JSON.parse(JSON.stringify(w, (k, v) => k.startsWith('_') ? undefined : v)); }
 function editWorkout(id) {
   const w = S.workouts.find(x => x.id === id); if (!w) return;
-  const c = clean(w);
+  const c = structuredClone(w);
   const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>워크아웃 편집</h2><button class="wes" style="color:var(--blue);font-weight:700">저장</button></div>
    <div class="field"><label>이름</label><input class="wen" value="${esc(c.name)}"></div>
    <div class="field"><label>시작 시간</label><input class="wed" type="datetime-local" step="1" value="${c.start}"></div>
@@ -1551,7 +1523,7 @@ document.addEventListener('click', e => {
       const m = openModal(`<div class="modal-h"><button class="xbtn" data-close>✕</button><h2>체중 기록</h2><button class="bws" style="color:var(--blue);font-weight:700">저장</button></div>
         <div class="field"><label>체중 (${S.settings.unit})</label><input class="bwv" inputmode="decimal" type="number" step="0.1" value="${lastBw ? nfmt(toU(lastBw.kg)) : ''}"></div>
         <div class="field"><label>날짜</label><input class="bwd" type="date" value="${dayKey(new Date())}"></div>`, { bottom: true });
-      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const dv = $('.bwd', m).value || dayKey(new Date()); const now = new Date(); const date = dv + 'T' + (dv === dayKey(now) ? `${pad(now.getHours())}:${pad(now.getMinutes())}:00` : '07:00:00'); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
+      $('.bws', m).addEventListener('click', () => { const v = parseFloat($('.bwv', m).value); if (!(v > 0)) return toast('숫자를 입력하세요'); const date = manualBwDate($('.bwd', m).value || dayKey(new Date())); S.bw = S.bw.filter(x => x.date !== date); S.bw.push({ date, kg: fromU(v), src: 'manual' }); S.bw.sort((a, b) => a.date < b.date ? -1 : 1); save('bw'); closeAllModals(); render(); });
       break;
     }
     case 'bw-list': {
@@ -1580,11 +1552,11 @@ document.addEventListener('click', e => {
     case 'tpl-auto': { const n = templatesFromHistory(); closeAllModals(); toast(n ? `템플릿 ${n}개 생성` : '새로 만들 템플릿이 없어요'); render(); break; }
     case 'tpl-clear': if (confirm('모든 템플릿을 삭제할까요?')) { S.templates = []; save('templates'); closeAllModals(); render(); } break;
     case 'force-update': toast('최신 버전 받는 중…', 5000); Promise.all(Object.keys(saveTimers).map(k => save(k, true))).finally(() => { if (window.__hardReload) window.__hardReload('manual'); else location.reload(); }); break;
-    case 'rest-default': pickRest('기본 휴식 시간', S.settings.rest > 0 ? S.settings.rest : DEFAULT_REST, t => { S.settings.rest = t; save('settings'); render(); toast(`기본 휴식 ${fmtClock(t)}`); }); break;
+    case 'rest-default': pickRest('기본 휴식 시간', S.settings.rest, t => { S.settings.rest = t; save('settings'); render(); toast(`기본 휴식 ${fmtClock(t)}`); }); break;
     case 'unit': S.settings.unit = t.dataset.v; save('settings'); render(); break;
     case 'exp-csv': download(`strong_export_${stamp()}.csv`, '\uFEFF' + StrongCSV.exportStrong(S.workouts, { exUnit: S.settings.exUnit }), 'text/csv'); break;
-    case 'exp-json': download(`workout_backup_${stamp()}.json`, JSON.stringify({ app: 'workout-app', version: 1, exported: new Date().toISOString(), workouts: S.workouts.map(clean), templates: S.templates, customEx: S.customEx, bw: S.bw, settings: S.settings }), 'application/json'); break;
-    case 'clear': if (confirm('정말 모든 데이터를 삭제할까요? 되돌릴 수 없어요.') && confirm('한 번 더 확인: 모든 워크아웃·템플릿·체중 기록이 삭제됩니다.')) { S.workouts = []; S.templates = []; S.customEx = []; S.bw = []; S.active = null; S.sdsync = { token: '', last: 0, count: 0, err: '' }; S.settings = { ...DEFAULT_SETTINGS, exUnit: {} }; for (const k of KEYS) save(k, true); derive(); render(); toast('삭제됨'); } break;
+    case 'exp-json': download(`workout_backup_${stamp()}.json`, JSON.stringify({ app: 'workout-app', version: 1, exported: new Date().toISOString(), workouts: S.workouts, templates: S.templates, customEx: S.customEx, bw: S.bw, settings: S.settings }), 'application/json'); break;
+    case 'clear': if (confirm('정말 모든 데이터를 삭제할까요? 되돌릴 수 없어요.') && confirm('한 번 더 확인: 모든 워크아웃·템플릿·체중 기록이 삭제됩니다.')) { S.workouts = []; S.templates = []; S.customEx = []; S.bw = []; S.active = null; S.sdsync = { token: '', last: 0, count: 0, err: '' }; S.settings = defaultSettings(); for (const k of KEYS) save(k, true); derive(); render(); toast('삭제됨'); } break;
   }
 });
 
@@ -1662,10 +1634,13 @@ function bindBannerOpen(ban) {
   window.__app = { sdSync, S, D: () => D, importCsvText, derive, render, go, startWorkout, openActive, big3Targets400, scaleThreeTo400, liftBest, big3Series };
 })();
 
-/* ================= 심플다이어트 ================= */
 let sdBusy = false;
-// Bodyweight series per the 설정 source: 'pm' = only Simple Diet 오후 slot (12:00–03:59, same rule as Simple Diet), latest per day; 'all' = first reading per day.
-function bwSlot(e) { if (e.sk && / (오전|오후)$/.test(e.sk)) return e.sk.slice(-2); const h = +e.date.slice(11, 13); return h >= 4 && h < 12 ? '오전' : '오후'; }
+function bwSlot(e) { if (e.sk && / (오전|오후)$/.test(e.sk)) return e.sk.slice(-2); return slotOfHour(+e.date.slice(11, 13)); }
+function manualBwDate(day) {
+  const now = new Date(), pmOnly = S.settings.bwSrc === 'pm';
+  const useClock = day === dayKey(now) && (!pmOnly || slotOfHour(now.getHours()) === '오후');
+  return `${day}T${useClock ? `${pad(now.getHours())}:${pad(now.getMinutes())}:00` : pmOnly ? '12:00:00' : '07:00:00'}`;
+}
 function bwDayKey(e) { return e.sk && /^\d{4}-\d{2}-\d{2} /.test(e.sk) ? e.sk.slice(0, 10) : e.date.slice(0, 10); }
 function bwSeries() {
   const sorted = S.bw.slice().sort((a, b) => a.date < b.date ? -1 : 1);

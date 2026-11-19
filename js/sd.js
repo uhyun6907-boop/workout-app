@@ -112,6 +112,6 @@
     return [...out.values()];
   }
 
-  g.SD = { parseCsv, fetchRemote, parseRecords, applyRecords, readSameOrigin, skOf };
+  g.SD = { parseCsv, fetchRemote, parseRecords, applyRecords, readSameOrigin, skOf, slotOfHour, pad };
   if (typeof module !== 'undefined') module.exports = g.SD;
 })(typeof window !== 'undefined' ? window : globalThis);

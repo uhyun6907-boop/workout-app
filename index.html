@@ -13,8 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <script>
-/* update guard: runs before the app. Never touches IndexedDB (user data). */
-window.APP_VERSION = 25;
+window.APP_VERSION = 26;
 (function () {
   var V = window.APP_VERSION, SCOPE = '/workout-app/';
   try { if (/[?&]u=\d+/.test(location.search)) history.replaceState(null, '', location.pathname); } catch (e) {}
@@ -26,6 +25,10 @@ window.APP_VERSION = 25;
     location.replace(location.pathname + '?u=' + Date.now()); // new URL => skips the 10-minute HTTP cache
   }
   window.__hardReload = hardReload;
+  function notifyStuck(nv) {
+    var show = function () { window.toast('새 버전(v' + nv + ')을 받지 못했어요. 설정 > 업데이트 확인을 눌러 주세요', 5000); };
+    if (window.toast) show(); else window.addEventListener('DOMContentLoaded', show);
+  }
   async function checkVersion() {
     try {
       var r = await fetch('version.json?ts=' + Date.now(), { cache: 'no-store' });
@@ -33,7 +36,7 @@ window.APP_VERSION = 25;
       var j = await r.json(), nv = +j.version || 0;
       if (nv > V) {
         var tries = +(sessionStorage.getItem('wa-upd-' + nv) || 0);
-        if (tries >= 2) return; // avoid reload loops (e.g. CDN still propagating)
+        if (tries >= 2) { notifyStuck(nv); return; }
         sessionStorage.setItem('wa-upd-' + nv, String(tries + 1));
         hardReload(nv);
       }
@@ -57,7 +60,7 @@ window.APP_VERSION = 25;
   window.addEventListener('pageshow', function (e) { if (e.persisted) checkVersion(); });
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=25">
+<link rel="stylesheet" href="styles.css?v=26">
 </head>
 <body>
 <div id="app">
@@ -73,9 +76,9 @@ window.APP_VERSION = 25;
   <div id="sheets"></div>
   <div id="toast" hidden></div>
 </div>
-<script src="js/exercises.js?v=25"></script>
-<script src="js/csv.js?v=25"></script>
-<script src="js/sd.js?v=25"></script>
-<script src="js/app.js?v=25"></script>
+<script src="js/exercises.js?v=26"></script>
+<script src="js/csv.js?v=26"></script>
+<script src="js/sd.js?v=26"></script>
+<script src="js/app.js?v=26"></script>
 </body>
 </html>

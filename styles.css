@@ -140,10 +140,9 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .rest-line i{position:absolute;left:0;top:0;bottom:0;width:0;background:#9FD0FA;border-radius:6px}
 .rest-row.running .rest-line{background:var(--blue-l)}
 .rest-row.running .rest-line::before{display:none}
-.rest-time,.rest-input{position:relative;z-index:1;background:#fff;color:var(--blue);font-weight:700;font-size:13px;padding:1px 10px;border-radius:7px;font-variant-numeric:tabular-nums}
+.rest-time{position:relative;z-index:1;background:#fff;color:var(--blue);font-weight:700;font-size:13px;padding:1px 10px;border-radius:7px;font-variant-numeric:tabular-nums}
 .rest-row.running .rest-time{background:transparent;color:#0B3A66}
 .rest-row.past:not(.running) .rest-time{color:var(--muted)}
-.rest-input{width:70px;text-align:center;border:1.5px solid var(--blue);outline:none}
 #toast button{background:none;border:0;font:inherit}
 .chart[data-tip]{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .chart text.tip-t{fill:#fff;font-size:12px;font-weight:700}
@@ -220,8 +219,7 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .swipe-cols input.pad-focus.pad-caret::after{content:''}
 .swipe-cols input.pad-focus{animation:padCaret 1s step-end infinite}
 @keyframes padCaret{50%{box-shadow:inset 0 0 0 1px #1C1C1E, inset -2px 0 0 #1C1C1E}}
-.rest-time.pad-focus,.rest-input.pad-focus{outline:2.5px solid #1C1C1E;outline-offset:1px;border-radius:7px}
-.rpe-tag{display:inline-block;font-size:10px;font-weight:800;color:var(--blue);background:var(--blue-l);border-radius:5px;padding:1px 4px;margin-top:2px;justify-self:center}
+.rest-time.pad-focus{outline:2.5px solid #1C1C1E;outline-offset:1px;border-radius:7px}
 #rpePop{position:fixed;left:12px;right:12px;bottom:calc(280px + var(--sab));z-index:42;background:#2C2C2E;border-radius:14px;padding:12px;box-shadow:0 8px 30px rgba(0,0,0,.4);display:none}
 #rpePop.on{display:block}
 #rpePop .rh{color:#fff;font-weight:800;font-size:15px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
