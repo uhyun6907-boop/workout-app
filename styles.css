@@ -153,10 +153,10 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 
 .aw-title-row{display:flex;align-items:center;gap:8px;min-width:0}
 .aw-title-row .aw-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rest-quick{display:flex;flex-direction:column;align-items:flex-end;gap:0;flex:none;flex-shrink:0}
-
-.rest-quick button{flex:none;height:26px;padding:0 5px;border:0;background:transparent;color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:26px}
-.rest-quick button:active{opacity:.45}
+.rest-quick{display:grid;grid-template-columns:auto repeat(5,1fr);align-items:center;gap:6px;margin:2px 0 8px}
+.rest-quick .rq-label{color:var(--muted);font-size:13px;font-weight:700;padding-right:2px}
+.rest-quick button{height:40px;padding:0;border:0;border-radius:10px;background:var(--blue-l);color:var(--blue);font-size:15px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.rest-quick button:active{background:var(--blue);color:#fff}
 .full .sheet-handle{display:flex;justify-content:center;align-items:center;height:18px;margin:0 -16px;cursor:grab}
 .full .sheet-handle i{width:36px;height:5px;border-radius:99px;background:#D1D1D6;display:block}
 .full .fhead-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:28px}
@@ -164,7 +164,6 @@ tr.done .check{background:var(--green)}tr.done .check svg{fill:#fff}
 .full.dragging .fbody{-webkit-overflow-scrolling:auto}
 .sets .prev-btn{color:var(--muted);font-size:14px;font-weight:700;padding:6px 4px;border-radius:8px;min-height:32px;white-space:nowrap}
 .sets .prev-btn:active,.sets .prev-btn.flash{background:var(--blue-l);color:var(--blue)}
-.rest-quick-row{display:flex;align-items:center;justify-content:flex-end;gap:0}
 
 .sets-head{display:grid;grid-template-columns:34px minmax(52px,1fr) minmax(58px,74px) minmax(48px,60px) 38px;gap:3px;padding:2px 3px;align-items:center;color:#222;font-weight:700;font-size:13px;text-align:center;margin-bottom:2px}
 .swipe-row{position:relative;margin:4px 0;border-radius:8px;overflow:hidden;touch-action:pan-y;-webkit-user-select:none;user-select:none;max-width:100%}
