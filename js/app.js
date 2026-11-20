@@ -1189,7 +1189,6 @@ function closeActive() {
 }
 
 function startRest(sec) {
-  try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
   restTimer = { end: Date.now() + sec * 1000, total: sec };
 }
 // Stop the running rest without beep/toast. Only clears if it belongs to the given set (ei/si).
@@ -1200,12 +1199,40 @@ function stopRestForSet(ei, si) {
   restTimer = null;
   return true;
 }
-function beep() {
-  try {
-    if (!audioCtx) return; const t = audioCtx.currentTime;
-    [0, .25, .5].forEach(d => { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = 880; g.gain.setValueAtTime(.25, t + d); g.gain.exponentialRampToValueAtTime(.001, t + d + .2); o.connect(g); g.connect(audioCtx.destination); o.start(t + d); o.stop(t + d + .22); });
-  } catch (e) {}
+function unlockAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+    src.connect(audioCtx.destination); src.start();
+  }
+  if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+}
+async function playChime() {
+  if (!audioCtx) return;
+  if (audioCtx.state !== 'running') await audioCtx.resume().catch(() => {});
+  const t = audioCtx.currentTime, out = audioCtx.createGain();
+  out.gain.value = .9; out.connect(audioCtx.destination);
+  for (const [ratio, level, decay] of [[1, .55, .9], [2, .25, .6], [2.76, .18, .4], [5.4, .08, .25]]) {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 880 * ratio;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + .005);
+    g.gain.exponentialRampToValueAtTime(level * .02, t + decay); g.gain.linearRampToValueAtTime(0, t + decay + .05);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + decay + .06);
+  }
+}
+let missedChimeEnd = 0;
+const CHIME_LATE_MS = 60000;
+function endRest() {
+  const end = restTimer.end; restTimer = null;
+  if (document.hidden) missedChimeEnd = end;
+  else if (Date.now() - end <= CHIME_LATE_MS) playChime();
   if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  toast('휴식 끝! 다음 세트 💪');
+}
+function playMissedChime() {
+  if (missedChimeEnd && Date.now() - missedChimeEnd <= CHIME_LATE_MS) playChime();
+  missedChimeEnd = 0;
 }
 function drawTimer() {
   const tb = $('#timerBar'); if (!tb) return;
@@ -1223,7 +1250,7 @@ function tick() {
   if (!S.active) return;
   const c = $('#awClock'); if (c) c.textContent = fmtClock((Date.now() - S.active.startTs) / 1000);
   if (restTimer) {
-    if (Date.now() >= restTimer.end) { restTimer = null; beep(); toast('휴식 끝! 다음 세트 💪'); }
+    if (Date.now() >= restTimer.end) endRest();
     drawTimer();
   }
   updateBanner();
@@ -1622,7 +1649,9 @@ function bindBannerOpen(ban) {
   go('profile');
   bindBannerOpen($('#activeBanner'));
   setInterval(tick, 500);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); if (S.sdsync.token && Date.now() - (S.sdsync.tried || 0) > 60000) sdSync(false); } });
+  if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  for (const ev of ['pointerdown', 'touchend']) document.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); playMissedChime(); if (S.sdsync.token && Date.now() - (S.sdsync.tried || 0) > 60000) sdSync(false); } });
   window.addEventListener('online', () => { if (S.sdsync.token) sdSync(false); });
   if (S.sdsync.token) sdSync(false);
   try {

@@ -1,4 +1,4 @@
-const VERSION = 26;
+const VERSION = 27;
 const CACHE = 'workout-app-v' + VERSION;
 const ASSETS = ['./', 'index.html', ...['styles.css', 'js/exercises.js', 'js/csv.js', 'js/sd.js', 'js/app.js'].map(f => `${f}?v=${VERSION}`), 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => {
